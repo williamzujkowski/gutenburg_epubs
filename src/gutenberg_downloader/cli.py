@@ -6,12 +6,14 @@ with EPUB format from Project Gutenberg.
 """
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
 
 from . import __version__
+from .async_discovery import AsyncBookDiscovery
 from .discovery import BookDiscovery
 from .logger import setup_logger
 
@@ -95,6 +97,11 @@ Examples:
         default="simple",
         help="Output format (default: simple)",
     )
+    discover_parser.add_argument(
+        "--async-mode",
+        action="store_true",
+        help="Use asynchronous operations for better performance",
+    )
 
     # Download command
     download_parser = subparsers.add_parser(
@@ -173,6 +180,17 @@ Examples:
         action="store_true",
         help="Skip books that already exist in the output directory",
     )
+    download_popular_parser.add_argument(
+        "--async-mode",
+        action="store_true",
+        help="Use asynchronous downloads for better performance",
+    )
+    download_popular_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Maximum concurrent downloads (default: 5, only with --async)",
+    )
 
     return parser
 
@@ -186,9 +204,53 @@ def discover_command(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
+    if args.async_mode:
+        return asyncio.run(discover_command_async(args))
+
     try:
         with BookDiscovery() as discovery:
             books = discovery.discover_popular_english_epubs(limit=args.limit)
+
+            if not books:
+                logger.info("No English books with EPUB files found.")
+                return 0
+
+            if args.format == "simple":
+                print(f"Found {len(books)} popular English books with EPUB files:\n")
+                for book in books:
+                    title = book.get("metadata", {}).get("title", "Unknown Title")
+                    author = book.get("metadata", {}).get("author", "Unknown Author")
+                    book_id = book.get("book_id", "Unknown")
+                    print(f"{book_id}: {title} by {author}")
+            else:  # detailed format
+                for i, book in enumerate(books, 1):
+                    print(f"\n--- Book {i} ---")
+                    print(f"ID: {book.get('book_id')}")
+                    print(f"Title: {book.get('metadata', {}).get('title')}")
+                    print(f"Author: {book.get('metadata', {}).get('author')}")
+                    print(f"Language: {book.get('metadata', {}).get('language')}")
+                    print(f"EPUB URL: {book.get('download_links', {}).get('epub')}")
+                    print(f"Popularity Rank: {book.get('popularity_rank')}")
+
+            return 0
+
+    except Exception as e:
+        logger.error(f"Error discovering books: {e}")
+        return 1
+
+
+async def discover_command_async(args: argparse.Namespace) -> int:
+    """Execute the discover command asynchronously.
+
+    Args:
+        args: Command-line arguments.
+
+    Returns:
+        Exit code.
+    """
+    try:
+        async with AsyncBookDiscovery() as discovery:
+            books = await discovery.discover_popular_english_epubs_async(limit=args.limit)
 
             if not books:
                 logger.info("No English books with EPUB files found.")
@@ -364,6 +426,9 @@ def download_popular_command(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
+    if args.async_mode:
+        return asyncio.run(download_popular_command_async(args))
+
     try:
         # Create output directory if it doesn't exist
         args.output.mkdir(parents=True, exist_ok=True)
@@ -396,11 +461,15 @@ def download_popular_command(args: argparse.Namespace) -> int:
 
                 logger.info(f"Downloading [{i}/{len(books)}] {book_id}: {title}")
 
-                success = discovery.download_book_epub(
-                    book_id,
-                    output_path,
-                    book_details=book,
-                )
+                if book_id is not None:
+                    success = discovery.download_book_epub(
+                        book_id,
+                        output_path,
+                        book_details=book,
+                    )
+                else:
+                    logger.error(f"No book_id found for book: {title}")
+                    success = False
 
                 if success:
                     downloaded_count += 1
@@ -413,6 +482,58 @@ def download_popular_command(args: argparse.Namespace) -> int:
             print(f"Downloaded: {downloaded_count}")
             print(f"Skipped: {skipped_count}")
             print(f"Failed: {len(books) - downloaded_count - skipped_count}")
+
+            return 0
+
+    except Exception as e:
+        logger.error(f"Error downloading popular books: {e}")
+        return 1
+
+
+async def download_popular_command_async(args: argparse.Namespace) -> int:
+    """Execute the download-popular command asynchronously.
+
+    Args:
+        args: Command-line arguments.
+
+    Returns:
+        Exit code.
+    """
+    try:
+        # Create output directory if it doesn't exist
+        args.output.mkdir(parents=True, exist_ok=True)
+
+        async with AsyncBookDiscovery(max_concurrency=args.concurrency) as discovery:
+            logger.info(f"Discovering {args.limit} popular English books with EPUB files...")
+            books = await discovery.discover_popular_english_epubs_async(limit=args.limit)
+
+            if not books:
+                logger.info("No English books with EPUB files found.")
+                return 0
+
+            # Extract book IDs for bulk download
+            book_ids = [book["book_id"] for book in books]
+
+            logger.info(f"Starting concurrent download of {len(book_ids)} books...")
+
+            # Download all books concurrently
+            results = await discovery.download_multiple_books_async(
+                book_ids,
+                args.output,
+                progress_bar=True,
+                skip_existing=args.skip_existing,
+                stop_on_error=False,
+            )
+
+            # Calculate statistics
+            downloaded_count = sum(1 for success in results.values() if success)
+            failed_count = sum(1 for success in results.values() if not success)
+            total_count = len(book_ids)
+
+            print("\nDownload Summary:")
+            print(f"Total books: {total_count}")
+            print(f"Downloaded: {downloaded_count}")
+            print(f"Failed: {failed_count}")
 
             return 0
 

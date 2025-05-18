@@ -7,7 +7,7 @@ progress tracking, and file management.
 import logging
 import time
 from pathlib import Path
-from typing import IO, Optional, Union
+from typing import IO, Any, Callable, Optional, Union
 
 import httpx
 from tqdm import tqdm
@@ -46,7 +46,7 @@ class EpubDownloader:
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context manager and clean up resources."""
         self.close()
 
@@ -191,7 +191,7 @@ class EpubDownloader:
         self,
         url: str,
         output_stream: IO[bytes],
-        progress_callback: Optional[callable] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         """Stream download an EPUB file to a file-like object.
 

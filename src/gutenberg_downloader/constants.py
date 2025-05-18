@@ -22,6 +22,8 @@ RETRY_BACKOFF_FACTOR = 2.0
 # Download configuration
 DEFAULT_DOWNLOAD_DIR = Path("downloads")
 CHUNK_SIZE = 8192  # Bytes to read at a time when downloading
+MAX_DOWNLOAD_RETRIES = 3  # Maximum retry attempts for downloads
+MIN_DELAY_BETWEEN_REQUESTS = 1.0  # Minimum delay between requests
 
 # File formats
 EPUB_MIME_TYPE = "application/epub+zip"

@@ -36,7 +36,7 @@ class BookDiscovery:
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context manager and clean up resources."""
         self.close()
 
@@ -64,7 +64,7 @@ class BookDiscovery:
             limit=limit * 2
         )  # Get more to filter
 
-        english_books_with_epub = []
+        english_books_with_epub: list[dict[str, Any]] = []
 
         for book in popular_books:
             if len(english_books_with_epub) >= limit:
@@ -132,7 +132,7 @@ class BookDiscovery:
         """
         # This is a simplified implementation - in reality, you'd want to
         # use Gutenberg's search API or catalog file
-        search_results = []
+        search_results: list[dict[str, Any]] = []
 
         # Get popular books and filter by title
         popular_books = self.scraper.get_popular_books(limit=1000)
@@ -168,7 +168,7 @@ class BookDiscovery:
             List of books by the specified author.
         """
         # This is a simplified implementation
-        search_results = []
+        search_results: list[dict[str, Any]] = []
 
         # Get popular books and check author information
         popular_books = self.scraper.get_popular_books(limit=1000)

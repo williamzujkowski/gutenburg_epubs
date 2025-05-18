@@ -44,10 +44,11 @@ class TestCreateParser:
     def test_discover_command_arguments(self):
         """Test discover command arguments."""
         parser = create_parser()
-        args = parser.parse_args(["discover", "--limit", "20", "--format", "detailed"])
+        args = parser.parse_args(["discover", "--limit", "20", "--format", "detailed", "--async-mode"])
         assert args.command == "discover"
         assert args.limit == 20
         assert args.format == "detailed"
+        assert args.async_mode is True
 
     def test_download_command_arguments(self):
         """Test download command arguments."""
@@ -85,12 +86,14 @@ class TestCreateParser:
         """Test download-popular command arguments."""
         parser = create_parser()
         args = parser.parse_args(
-            ["download-popular", "--limit", "3", "--output", "/books", "--skip-existing"]
+            ["download-popular", "--limit", "3", "--output", "/books", "--skip-existing", "--async-mode", "--concurrency", "10"]
         )
         assert args.command == "download-popular"
         assert args.limit == 3
         assert args.output == Path("/books")
         assert args.skip_existing is True
+        assert args.async_mode is True
+        assert args.concurrency == 10
 
 
 class TestDiscoverCommand:
@@ -99,8 +102,10 @@ class TestDiscoverCommand:
     def test_discover_simple_format(self, capsys):
         """Test discover command with simple format."""
         args = Mock()
+        args.async_mode = False
         args.limit = 2
         args.format = "simple"
+        args.async_mode = False
 
         mock_books = [
             {
@@ -130,6 +135,7 @@ class TestDiscoverCommand:
     def test_discover_detailed_format(self, capsys):
         """Test discover command with detailed format."""
         args = Mock()
+        args.async_mode = False
         args.limit = 1
         args.format = "detailed"
 
@@ -164,6 +170,7 @@ class TestDiscoverCommand:
         """Test discover command when no books are found."""
         _ = capsys  # Needed for pytest fixture
         args = Mock()
+        args.async_mode = False
         args.limit = 10
         args.format = "simple"
 
@@ -182,6 +189,7 @@ class TestDiscoverCommand:
     def test_discover_error(self):
         """Test discover command error handling."""
         args = Mock()
+        args.async_mode = False
         args.limit = 10
         args.format = "simple"
 
@@ -201,6 +209,7 @@ class TestDownloadCommand:
     def test_download_success(self, tmp_path):
         """Test successful download."""
         args = Mock()
+        args.async_mode = False
         args.book_id = 123
         args.output = tmp_path
         args.filename = None
@@ -228,6 +237,7 @@ class TestDownloadCommand:
     def test_download_custom_filename(self, tmp_path):
         """Test download with custom filename."""
         args = Mock()
+        args.async_mode = False
         args.book_id = 123
         args.output = tmp_path
         args.filename = "custom_name.epub"
@@ -253,6 +263,7 @@ class TestDownloadCommand:
     def test_download_book_not_found(self):
         """Test download when book is not found."""
         args = Mock()
+        args.async_mode = False
         args.book_id = 999
         args.output = Path("/tmp")
         args.filename = None
@@ -272,6 +283,7 @@ class TestDownloadCommand:
     def test_download_failure(self):
         """Test download failure."""
         args = Mock()
+        args.async_mode = False
         args.book_id = 123
         args.output = Path("/tmp")
         args.filename = None
@@ -296,6 +308,7 @@ class TestSearchCommand:
     def test_search_by_title(self, capsys):
         """Test search by title."""
         args = Mock()
+        args.async_mode = False
         args.title = "Pride"
         args.author = None
         args.limit = 5
@@ -330,6 +343,7 @@ class TestSearchCommand:
     def test_search_by_author(self, capsys):
         """Test search by author."""
         args = Mock()
+        args.async_mode = False
         args.title = None
         args.author = "Austen"
         args.limit = 10
@@ -356,6 +370,7 @@ class TestSearchCommand:
     def test_search_no_results(self):
         """Test search with no results."""
         args = Mock()
+        args.async_mode = False
         args.title = "NonexistentBook"
         args.author = None
         args.limit = 5
@@ -378,6 +393,7 @@ class TestStatsCommand:
     def test_stats_success(self, capsys):
         """Test stats command success."""
         args = Mock()
+        args.async_mode = False
 
         mock_stats = {
             "total_books_sampled": 1000,
@@ -402,6 +418,7 @@ class TestStatsCommand:
     def test_stats_error(self):
         """Test stats command error handling."""
         args = Mock()
+        args.async_mode = False
 
         with patch("gutenberg_downloader.cli.BookDiscovery") as MockDiscovery:
             MockDiscovery.side_effect = Exception("Stats error")
@@ -419,6 +436,7 @@ class TestDownloadPopularCommand:
     def test_download_popular_success(self, tmp_path, capsys):
         """Test successful popular downloads."""
         args = Mock()
+        args.async_mode = False
         args.limit = 2
         args.output = tmp_path
         args.skip_existing = False
@@ -451,6 +469,7 @@ class TestDownloadPopularCommand:
     def test_download_popular_skip_existing(self, tmp_path, capsys):
         """Test skipping existing files."""
         args = Mock()
+        args.async_mode = False
         args.limit = 2
         args.output = tmp_path
         args.skip_existing = True
