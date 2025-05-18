@@ -30,6 +30,7 @@ EPUB_EXTENSION = ".epub"
 # Timeout configuration
 DEFAULT_TIMEOUT_SECONDS = 30.0
 ROBOTS_TXT_TIMEOUT_SECONDS = 10.0
+REQUEST_TIMEOUT = 30.0  # General request timeout
 
 # Async configuration
 DEFAULT_CONCURRENT_DOWNLOADS = 5

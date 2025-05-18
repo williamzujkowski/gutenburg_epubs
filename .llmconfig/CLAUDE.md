@@ -37,11 +37,12 @@ pre-commit install
 ### Lint & Test
 ```bash
 # Format code
-black .
-isort .
+ruff format .
 
-# Lint code
-flake8
+# Lint code  
+ruff check .
+
+# Run mypy for type checking
 mypy .
 
 # Run all tests
@@ -81,7 +82,7 @@ These standards provide comprehensive guidelines beyond the project summary.
 2.  Enforce consistent formatting (indentation, line length (88 chars), statement termination, brackets, whitespace).
 3.  Use meaningful naming conventions (PascalCase classes, snake\_case functions/variables, UPPER\_SNAKE\_CASE constants, underscore prefix for private).
 4.  Structure code consistently (organize imports, group related functions/methods, consistent file organization, limit file/function size).
-5.  Automate style enforcement (linters like flake8, formatters like black, pre-commit hooks, CI/CD integration).
+5.  Automate style enforcement (Ruff for Python linting and formatting, pre-commit hooks, CI/CD integration).
 
 ### 3.2. Documentation Standards
 1.  Include documentation for all public interfaces (purpose, parameters, returns, exceptions, examples).
@@ -300,19 +301,19 @@ def test_agent_logging_completeness():
 ```
 
 #### 4.2.2. Static Analysis Rules
-* Configure linters (flake8, pylint) and analyzers (mypy, bandit) with strict rules.
+* Configure Ruff (replaces flake8, isort, etc.) and analyzers (mypy, bandit) with strict rules.
 * Enforce style, find bugs, identify security/performance issues.
-* Create project-specific custom rules.
+* Create project-specific custom rules using Ruff's extensive rule set.
 * Integrate into pre-commit hooks and CI/CD.
 * Maintain a "zero warnings" policy (treat warnings as errors).
 ```python
 # Example pre-commit hook config (`.pre-commit-config.yaml`)
-# - repo: [https://github.com/pycqa/flake8](https://github.com/pycqa/flake8)
-#   rev: ...
+# - repo: https://github.com/astral-sh/ruff-pre-commit
+#   rev: v0.2.0
 #   hooks:
-#   - id: flake8
-#     additional_dependencies: [flake8-bugbear, flake8-comprehensions, ...]
-# - repo: [https://github.com/pre-commit/mirrors-mypy](https://github.com/pre-commit/mirrors-mypy)
+#   - id: ruff-check
+#   - id: ruff-format
+# - repo: https://github.com/pre-commit/mirrors-mypy
 #   rev: ...
 #   hooks:
 #   - id: mypy
@@ -509,7 +510,7 @@ The `FILE_TREE.md` should:
 
 #### 6.4.1. Linters and Formatters
 - **JavaScript/TypeScript**: Use ESLint and Prettier with a shared configuration to enforce code style and formatting
-- **Python**: Employ Flake8 and Black for linting and formatting, respectively
+- **Python**: Use Ruff for combined linting and formatting (replaces Flake8, Black, isort, and more)
 - **Go**: Utilize `go fmt` and `golint` to maintain code consistency
 
 #### 6.4.2. Type Checking
@@ -572,7 +573,7 @@ Generate code for [specific feature/module description].
 Follow these comprehensive coding standards:
 
 1.  **Style and Structure:**
-    * Follow Python PEP 8 style guide conventions with Black formatting (88 char lines).
+    * Follow Python PEP 8 style guide conventions with Ruff formatting (88 char lines).
     * Use meaningful, consistent naming (snake\_case for functions/vars, PascalCase for classes).
     * Document all public interfaces thoroughly using Google-style docstrings with type hints.
     * Limit function/method size ideally below 50 lines.
@@ -620,7 +621,7 @@ Follow the project's Testing Manifesto (detailed in CLAUDE.md):
 
 2.  **Quality Assurance:**
     * Aim for high code coverage (85%+ general, 95%+ critical).
-    * Ensure code passes static analysis (flake8, mypy).
+    * Ensure code passes static analysis (ruff, mypy).
     * Implement contract tests if interacting with defined interfaces.
     * Consider property-based tests (using Hypothesis) for functions with clear invariants.
 

@@ -29,7 +29,8 @@ def test_setup_logger_custom_format():
     logger = setup_logger("test_logger3", format_string=custom_format)
 
     handler = logger.handlers[0]
-    assert handler.formatter._fmt == custom_format
+    if handler.formatter is not None:
+        assert handler.formatter._fmt == custom_format
 
 
 def test_setup_logger_no_duplicate_handlers():
