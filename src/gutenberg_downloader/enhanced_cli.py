@@ -98,6 +98,19 @@ Examples:
         help="Skip books that already exist in the output directory",
     )
     
+    # Mirror options
+    parser.add_argument(
+        "--use-mirrors",
+        action="store_true",
+        help="Use mirror site rotation to avoid rate limits and speed up downloads",
+    )
+    
+    parser.add_argument(
+        "--preferred-mirrors",
+        type=str,
+        help="Comma-separated list of preferred mirror URLs",
+    )
+    
     # Output options
     parser.add_argument(
         "--verbose", "-v",
@@ -141,8 +154,9 @@ def enhanced_download_command(args: argparse.Namespace) -> int:
         # Create output directory
         args.output.mkdir(parents=True, exist_ok=True)
         
-        # Initialize downloader
-        with EnhancedDownloader(db_path=args.db_path) as downloader:
+        # Initialize downloader with mirror support if requested
+        mirrors_enabled = getattr(args, 'use_mirrors', False)
+        with EnhancedDownloader(db_path=args.db_path, mirrors_enabled=mirrors_enabled) as downloader:
             print(f"\n📚 Enhanced Book Download")
             print(f"📂 Output directory: {args.output}")
             if search_terms:
@@ -152,6 +166,8 @@ def enhanced_download_command(args: argparse.Namespace) -> int:
             print(f"🌐 Language: {args.language}")
             if args.min_downloads:
                 print(f"⬇️  Min downloads: {args.min_downloads}")
+            if mirrors_enabled:
+                print(f"🔄 Mirror sites: Enabled")
             print(f"📊 Limit: {args.limit}")
             print("─" * 50)
             

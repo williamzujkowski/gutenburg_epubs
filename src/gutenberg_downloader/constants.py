@@ -49,3 +49,14 @@ ENGLISH_LANGUAGE_CODE = "en"
 # Project Gutenberg catalog
 # Update if needed
 DEFAULT_CATALOG_URL = "https://www.gutenberg.org/dirs/GUTINDEX.ALL"
+
+# Mirror site configuration
+DEFAULT_MIRRORS_CONFIG_URL = "https://www.gutenberg.org/dirs/MIRRORS.ALL"
+DEFAULT_MIRROR_HEALTH_CHECK_TIMEOUT = 10.0
+MIRROR_ROTATION_ENABLED = True  # Enable mirror rotation by default
+DEFAULT_MIRROR_RETRY_COUNT = 3  # Number of different mirrors to try before failing
+DEFAULT_MIRROR_FAILURE_THRESHOLD = 3  # Number of failures before deactivating a mirror
+DEFAULT_MIRROR_HEALTH_MIN = 0.1  # Minimum health score for a mirror
+DEFAULT_MIRROR_HEALTH_MAX = 1.0  # Maximum health score for a mirror
+DEFAULT_MIRROR_HEALTH_RECOVERY_RATE = 0.1  # How quickly a mirror recovers health
+DEFAULT_MIRROR_HEALTH_DECAY_RATE = 0.2  # How quickly a mirror loses health

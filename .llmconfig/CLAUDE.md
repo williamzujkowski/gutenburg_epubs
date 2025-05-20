@@ -651,13 +651,19 @@ Note: This is a template example. For project use, store actual prompt templates
 
 This project uses a structured approach to AI configuration, with all Claude-specific files organized in the `.llmconfig/` directory. This structure provides specialized guidance for different aspects of the project.
 
-### 8.1 Configuration Organization
+### 8.1 Repository Guide
+
+The REPOSITORY_GUIDE.md file serves as a comprehensive reference for understanding the codebase structure, file purposes, and key functionality. This guide must be kept up to date as the repository evolves.
+
+@/REPOSITORY_GUIDE.md to load repository structure and file purpose information
+
+### 8.2 Configuration Organization
 
 For details on how the Claude configuration files are organized, see:
 
 @.llmconfig/CONFIG_ORGANIZATION.md to load configuration organization information
 
-### 8.2 Project-Specific Configuration
+### 8.3 Project-Specific Configuration
 
 These files provide project-specific instructions for Claude:
 
@@ -668,14 +674,14 @@ These files provide project-specific instructions for Claude:
 
 Note: The USAGE_GUIDE.md in the .llmconfig directory appears to be a template guide not specifically related to this project and has been excluded from imports.
 
-### 8.3 Domain Knowledge
+### 8.4 Domain Knowledge
 
 These files provide essential domain knowledge for the vulnerability data pipeline:
 
 @.llmconfig/context/vulnerability_domain.md to load vulnerability domain knowledge
 @.llmconfig/context/code_standards.md to load project-specific code standards
 
-### 8.4 Templates and Examples
+### 8.5 Templates and Examples
 
 These files provide templates for generating code and examples of well-structured code:
 
@@ -684,7 +690,7 @@ These files provide templates for generating code and examples of well-structure
 @.llmconfig/examples/good_module.py to load example module code
 @.llmconfig/examples/good_test.py to load example test code
 
-### 8.5 System Instructions
+### 8.6 System Instructions
 
 These files provide system-level instructions for Claude:
 

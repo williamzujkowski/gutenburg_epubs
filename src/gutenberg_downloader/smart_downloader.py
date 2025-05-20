@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from .constants import REQUEST_TIMEOUT, DEFAULT_USER_AGENT, MAX_DOWNLOAD_RETRIES
 from .database import BookDatabase
+from .mirror_manager import MirrorManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,16 @@ logger = logging.getLogger(__name__)
 class SmartDownloader:
     """Smart downloader with resume capability and state tracking."""
     
-    def __init__(self, db_path: str = "gutenberg_books.db"):
+    def __init__(self, db_path: str = "gutenberg_books.db", mirrors_enabled: bool = False):
         """Initialize smart downloader.
         
         Args:
             db_path: Path to the database file
+            mirrors_enabled: Whether to use mirror site rotation
         """
         self.db = BookDatabase(db_path)
+        self.mirrors_enabled = mirrors_enabled
+        self.mirror_manager = MirrorManager() if mirrors_enabled else None
         self.client = httpx.Client(
             headers={"User-Agent": DEFAULT_USER_AGENT},
             timeout=REQUEST_TIMEOUT,
@@ -40,6 +44,8 @@ class SmartDownloader:
     def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[Any]) -> None:
         """Context manager exit."""
         self.client.close()
+        if self.mirror_manager:
+            self.mirror_manager.close()
     
     def get_download_state(self, book_id: int) -> Optional[Dict[str, Any]]:
         """Get download state for a book.
@@ -155,6 +161,14 @@ class SmartDownloader:
             if resume_pos > 0:
                 logger.info(f"Found existing file {output_path.name} with {resume_pos} bytes. Attempting to resume.")
         
+        # Use mirror sites if enabled and book_id is provided
+        mirror_url = None
+        if self.mirrors_enabled and self.mirror_manager and book_id:
+            mirror_url = self.mirror_manager.get_book_url(book_id)
+            if mirror_url:
+                logger.info(f"Using mirror for book {book_id}: {mirror_url}")
+                url = mirror_url
+        
         while retries < MAX_DOWNLOAD_RETRIES:
             try:
                 # Setup headers for resume
@@ -188,6 +202,16 @@ class SmartDownloader:
                         output_path.stat().st_size if output_path.exists() else 0,
                         error_message=str(e)
                     )
+                
+                # If using mirrors, report failure and try a different mirror
+                if self.mirrors_enabled and self.mirror_manager and book_id and mirror_url:
+                    self.mirror_manager.report_failure(mirror_url)
+                    # Get a new mirror URL for the next attempt
+                    new_mirror_url = self.mirror_manager.get_book_url(book_id)
+                    if new_mirror_url and new_mirror_url != mirror_url:
+                        logger.info(f"Switching to alternate mirror: {new_mirror_url}")
+                        url = new_mirror_url
+                        mirror_url = new_mirror_url
                 
                 if retries < MAX_DOWNLOAD_RETRIES:
                     time.sleep(2 ** retries)  # Exponential backoff
@@ -249,6 +273,13 @@ class SmartDownloader:
                     total_size,
                     total_size
                 )
+                
+                # If using mirrors, report success
+                if self.mirrors_enabled and self.mirror_manager:
+                    # Get the hostname from the response URL
+                    hostname = response.url.host
+                    base_url = f"{response.url.scheme}://{hostname}"
+                    self.mirror_manager.report_success(base_url)
             
             return True
             

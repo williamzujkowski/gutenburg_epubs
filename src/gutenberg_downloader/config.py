@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -38,6 +38,12 @@ class Config:
     max_concurrent_downloads: int = 3
     skip_existing: bool = True
     smart_download: bool = True
+    
+    # Mirror settings
+    mirrors_enabled: bool = True
+    preferred_mirrors: List[str] = field(default_factory=list)
+    excluded_mirrors: List[str] = field(default_factory=list)
+    preferred_countries: List[str] = field(default_factory=list)
     
     # Cache settings
     cache_dir: str = ".cache"
@@ -83,6 +89,12 @@ class Config:
                 "max_concurrent": self.max_concurrent_downloads,
                 "skip_existing": self.skip_existing,
                 "smart_download": self.smart_download,
+            },
+            "mirrors": {
+                "enabled": self.mirrors_enabled,
+                "preferred_mirrors": self.preferred_mirrors,
+                "excluded_mirrors": self.excluded_mirrors,
+                "preferred_countries": self.preferred_countries,
             },
             "cache": {
                 "dir": self.cache_dir,
@@ -260,6 +272,14 @@ class ConfigManager:
             config.skip_existing = dl.get('skip_existing', config.skip_existing)
             config.smart_download = dl.get('smart_download', config.smart_download)
         
+        # Mirror settings
+        if 'mirrors' in data:
+            mirrors = data['mirrors']
+            config.mirrors_enabled = mirrors.get('enabled', config.mirrors_enabled)
+            config.preferred_mirrors = mirrors.get('preferred_mirrors', config.preferred_mirrors)
+            config.excluded_mirrors = mirrors.get('excluded_mirrors', config.excluded_mirrors)
+            config.preferred_countries = mirrors.get('preferred_countries', config.preferred_countries)
+        
         # Cache settings
         if 'cache' in data:
             cache = data['cache']
@@ -301,11 +321,16 @@ class ConfigManager:
             'GUTENBERG_CACHE_DIR': 'cache_dir',
             'GUTENBERG_LOG_LEVEL': 'log_level',
             'GUTENBERG_USER_AGENT': 'user_agent',
+            'GUTENBERG_MIRRORS_ENABLED': 'mirrors_enabled',
         }
         
         for env_var, config_attr in env_map.items():
             value = os.environ.get(env_var)
             if value:
+                # Convert string 'True'/'False' to bool for boolean fields
+                if value.lower() in ('true', 'false') and isinstance(getattr(self.config, config_attr), bool):
+                    value = value.lower() == 'true'
+                
                 setattr(self.config, config_attr, value)
                 logger.info(f"Overriding {config_attr} from environment: {value}")
     
@@ -328,6 +353,12 @@ class ConfigManager:
                 "max_concurrent": 3,
                 "skip_existing": True,
                 "smart_download": True,
+            },
+            "mirrors": {
+                "enabled": True,
+                "preferred_mirrors": ["https://gutenberg.pglaf.org/", "https://gutenberg.nabasny.com/"],
+                "excluded_mirrors": [],
+                "preferred_countries": ["US", "CA"],
             },
             "cache": {
                 "dir": ".cache",

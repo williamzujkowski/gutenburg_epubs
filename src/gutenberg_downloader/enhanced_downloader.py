@@ -13,6 +13,7 @@ from tqdm import tqdm
 from .constants import REQUEST_TIMEOUT, DEFAULT_USER_AGENT, MAX_DOWNLOAD_RETRIES
 from .database import BookDatabase
 from .smart_downloader import SmartDownloader
+from .mirror_manager import MirrorManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,16 @@ logger = logging.getLogger(__name__)
 class EnhancedDownloader(SmartDownloader):
     """Enhanced downloader with multi-filter capabilities."""
     
-    def __init__(self, db_path: str = "gutenberg_books.db"):
+    def __init__(self, db_path: str = "gutenberg_books.db", mirrors_enabled: bool = False):
         """Initialize enhanced downloader.
         
         Args:
             db_path: Path to the database file
+            mirrors_enabled: Whether to use mirror site rotation
         """
         super().__init__(db_path)
+        self.mirrors_enabled = mirrors_enabled
+        self.mirror_manager = MirrorManager() if mirrors_enabled else None
     
     def search_books_by_filters(
         self,

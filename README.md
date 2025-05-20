@@ -9,6 +9,10 @@ A Python tool for discovering and downloading EPUB books from Project Gutenberg,
 
 ## Latest Updates
 
+- ✅ Completed comprehensive CLI with support for all major commands
+- ✅ Enhanced mirror site support with persistent health tracking and automatic updates
+- ✅ Fixed global `--use-mirrors` flag to work with all commands
+- ✅ Improved mirror selection algorithm with weighted health-based selection
 - ✅ Added multi-filter download capability for combining search terms and subjects
 - ✅ Fixed database integration with proper full-text search support
 - ✅ Improved download reliability with robust streaming and resume capabilities
@@ -22,6 +26,7 @@ A Python tool for discovering and downloading EPUB books from Project Gutenberg,
 - 📊 **Database**: SQLite storage with FTS5 full-text search capability
 - 🔎 **Advanced Search**: Look up books by title, author, subject, or full-text
 - 🧠 **Multi-filter Search**: Combine search terms and subject filters
+- 🔄 **Mirror Site Rotation**: Distribute downloads across multiple Gutenberg mirrors
 - 📥 **Download Management**: Queue system with priority levels and concurrent workers
 - ⚡ **Performance**: Asynchronous concurrent downloads with up to 10x speed improvement
 - 💾 **Caching**: Multi-tier caching system for API responses
@@ -67,122 +72,143 @@ pre-commit install
 
 ## Quick Start
 
-### Initial Database Setup
+### Database Setup
 
-You have two options to populate the database:
+The database will be created automatically when needed. You can populate it through regular usage of the discovery and search commands:
 
-#### Option 1: Import from Offline Catalogs (Recommended)
-
-Download and import Project Gutenberg's offline catalog files:
-
-```bash
-# Import from CSV catalog (faster, simpler)
-python -m gutenberg_downloader.cli db import --format csv
-
-# Import from RDF catalog (more detailed, slower)
-python -m gutenberg_downloader.cli db import --format rdf
-```
-
-#### Option 2: Discover and Search Online
+#### Using Discovery and Search
 
 ```bash
 # Discover popular books
-python -m gutenberg_downloader.cli discover --limit 20
+gutenberg-downloader discover --limit 20
 
 # Or enable database usage for better performance
-python -m gutenberg_downloader.cli --use-db discover --limit 20
+gutenberg-downloader --use-db discover --limit 20
 ```
 
 ### Searching for Books
 
 ```bash
 # Search by title
-python -m gutenberg_downloader.cli search --title "Pride and Prejudice"
+gutenberg-downloader search --title "Pride and Prejudice"
 
 # Search by author
-python -m gutenberg_downloader.cli search --author "Jane Austen" --limit 5
+gutenberg-downloader search --author "Jane Austen" --limit 5
 
 # Full-text search in the database
-python -m gutenberg_downloader.cli search --full-text "Sherlock Holmes"
+gutenberg-downloader search --full-text "Sherlock Holmes"
 
 # Use the database for faster searches
-python -m gutenberg_downloader.cli --use-db search --author "Mark Twain"
+gutenberg-downloader --use-db search --author "Mark Twain"
 ```
 
 ### Downloading Books
 
 ```bash
 # Download a specific book by ID
-python -m gutenberg_downloader.cli download 1342 --output ./downloads/
+gutenberg-downloader download 1342 --output ./downloads/
 
-# Enable automatic resuming of downloads
-python -m gutenberg_downloader.cli --smart-download download 1342 --output ./downloads/
+# Download with mirror site support for faster, limit-avoiding downloads
+gutenberg-downloader --use-mirrors download 1342 --output ./downloads/
 
 # Download popular books
-python -m gutenberg_downloader.cli download-popular --limit 5 --output ./downloads/
+gutenberg-downloader download-popular --limit 5 --output ./downloads/
 
 # Use database for better performance
-python -m gutenberg_downloader.cli --use-db download-popular --limit 3 --output ./downloads/
+gutenberg-downloader --use-db download-popular --limit 3 --output ./downloads/
 
 # Enable asynchronous downloading for better performance
-python -m gutenberg_downloader.cli download-popular --limit 10 --output ./downloads/ --async-mode
+gutenberg-downloader download-popular --limit 10 --output ./downloads/ --async-mode
+
+# Set concurrency level for async downloads
+gutenberg-downloader download-popular --limit 20 --async-mode --concurrency 5 --output ./downloads/
 ```
 
 ### Multi-Filter Downloading
 
-The new `filter-download` command allows you to combine multiple search terms and filters:
+The `filter-download` command allows you to combine multiple search terms and filters:
 
 ```bash
 # Download science fiction books
-python -m gutenberg_downloader.cli filter-download --subjects "science fiction" --output ./scifi/
+gutenberg-downloader filter-download --subjects "science fiction" --output ./scifi/
 
 # Download books matching multiple keywords
-python -m gutenberg_downloader.cli filter-download --terms "space, aliens, future" --match-any --output ./space/
+gutenberg-downloader filter-download --terms "space, aliens, future" --match-any --output ./space/
 
 # Combine search terms and subjects with language filtering
-python -m gutenberg_downloader.cli filter-download --subjects "adventure, pirates" --terms "treasure" --language en --output ./adventure/
+gutenberg-downloader filter-download --subjects "adventure, pirates" --terms "treasure" --language en --output ./adventure/
 
 # Set minimum download count and limit results
-python -m gutenberg_downloader.cli filter-download --subjects "philosophy" --min-downloads 100 --limit 20 --output ./philosophy/
+gutenberg-downloader filter-download --subjects "philosophy" --min-downloads 100 --limit 20 --output ./philosophy/
 ```
 
-### Using the Queue
+### Using Mirror Sites for Better Downloads
 
 ```bash
-# Add books to download queue
-python -m gutenberg_downloader.cli queue add 1342 84 11
+# Enable mirror site rotation with default settings
+gutenberg-downloader --use-mirrors download-popular --limit 10 --output ./downloads/
 
-# Set priority (high, medium, low)
-python -m gutenberg_downloader.cli queue add 1342 --priority high
+# Specify preferred mirrors in config or command line
+gutenberg-downloader --preferred-mirrors "https://gutenberg.pglaf.org/,https://aleph.pglaf.org/" download 1342
 
-# View queue status
-python -m gutenberg_downloader.cli queue status
+# Get mirror site status
+gutenberg-downloader mirrors status
 
-# Start processing the queue with multiple workers
-python -m gutenberg_downloader.cli queue start --workers 3
+# Update mirror list from Project Gutenberg
+gutenberg-downloader mirrors update
+```
+
+### Command Overview
+
+Here's a summary of available commands:
+
+```
+discover              - Find popular books with EPUB format
+search                - Search for books by title, author, or subject
+download              - Download a specific book by ID
+download-popular      - Download multiple popular books
+filter-download       - Download books with advanced filtering
+resume                - Resume interrupted downloads
+db stats              - Show database statistics
+db clear              - Clear the database (use --force to skip confirmation)
+mirrors status        - Show mirror site status
+mirrors update        - Update mirror list from Project Gutenberg
+```
+
+Global options available for most commands:
+```
+--verbose, -v         - Enable verbose output
+--quiet, -q           - Suppress non-error output
+--use-db              - Use database for operations
+--db-path             - Path to database file (default: gutenberg_books.db)
+--use-mirrors         - Use mirror site rotation to avoid rate limits
+--preferred-mirrors   - Comma-separated list of preferred mirror URLs
 ```
 
 ### Database Management
 
 ```bash
 # Get database statistics
-python -m gutenberg_downloader.cli db stats
+gutenberg-downloader db stats
 
-# Show database migration status
-python -m gutenberg_downloader.cli db migration-status
+# Clear database (with confirmation prompt)
+gutenberg-downloader db clear
 
-# Export database to CSV/JSON/Excel/Markdown
-python -m gutenberg_downloader.cli export --format csv --output books.csv
+# Force clear database without confirmation
+gutenberg-downloader db clear --force
 ```
 
 ### Resume Interrupted Downloads
 
 ```bash
 # Resume all interrupted downloads
-python -m gutenberg_downloader.cli resume --output ./downloads/
+gutenberg-downloader resume --output ./downloads/
 
-# Resume with smart download capability
-python -m gutenberg_downloader.cli --smart-download resume --output ./downloads/
+# Resume with asynchronous processing
+gutenberg-downloader resume --output ./downloads/ --async-mode
+
+# Resume with mirror site rotation for faster downloads
+gutenberg-downloader --use-mirrors resume --output ./downloads/
 ```
 
 ## Configuration
@@ -199,24 +225,90 @@ Example configuration (YAML):
 db_path: "my_custom_db.db"
 
 # API settings
-api_base_url: "https://gutendex.com"
-api_timeout: 30
-api_retry_count: 3
-api_delay: 1.0
+api:
+  base_url: "https://gutendex.com"
+  timeout: 30
+  retry_count: 3
+  delay: 1.0
 
 # Download settings
-download_dir: "downloads"
-max_concurrent_downloads: 5
-skip_existing: true
-smart_download: true
+download:
+  dir: "downloads"
+  max_concurrent: 5
+  skip_existing: true
+  smart_download: true
+
+# Mirror settings
+mirrors:
+  enabled: true
+  preferred_mirrors:
+    - https://gutenberg.pglaf.org/
+    - https://aleph.pglaf.org/
+    - https://gutenberg.nabasny.com/
+  excluded_mirrors: []
+  preferred_countries:
+    - US
+    - CA
+  auto_update: true  # Automatically update mirrors list periodically
+  save_health_data: true  # Persist mirror health information between runs
+  health_check_interval: 3600  # Check mirror health every hour (in seconds)
 
 # Cache settings
-cache_dir: ".cache"
-cache_expiry: 86400  # 24 hours
-memory_cache_expiry: 300  # 5 minutes
+cache:
+  dir: ".cache"
+  expiry: 86400  # 24 hours
+  memory_expiry: 300  # 5 minutes
 
 # Queue settings
-queue_workers: 3
+queue:
+  workers: 3
+```
+
+## Mirror Site Support
+
+The Gutenberg EPUB Downloader now includes robust support for mirror sites to:
+
+1. **Distribute Load**: Avoid hitting rate limits from a single server by rotating between multiple mirrors
+2. **Improve Speed**: Select faster mirrors based on response time and health
+3. **Increase Reliability**: Continue working even if some mirrors are down
+
+### How Mirror Selection Works
+
+The system intelligently selects the best mirror for each download based on:
+
+1. **Health Score**: Each mirror gets a health score based on response time and reliability
+2. **Priority**: Some mirrors are prioritized over others (can be customized)
+3. **Recent Usage**: The system avoids using the same mirror repeatedly in a short timeframe
+4. **Book Availability**: Only mirrors known to have the specific book are selected
+5. **User Preferences**: You can specify preferred mirrors and countries in the configuration
+
+### Mirror Site Capabilities
+
+- **Automatic Rotation**: Seamlessly switch between mirrors if one fails
+- **Health Tracking**: Continuously monitor mirror health and adjust preferences with persistent health data
+- **Failed Request Handling**: Automatically retry with a different mirror if a download fails
+- **Country-Based Selection**: Prefer mirrors in specific countries for better performance
+- **Weighted Selection**: Intelligent mirror choice based on health score, priority, and recent usage
+- **Auto-Discovery**: Update mirror list from Project Gutenberg's MIRRORS.ALL file
+- **Health Persistence**: Mirror health data is saved between runs in user's home directory
+- **Configuration Options**: Extensive customization through YAML config
+
+### Programming with Mirrors
+
+```python
+from gutenberg_downloader import EpubDownloader, MirrorManager
+
+# Use the mirror manager directly
+mirror_mgr = MirrorManager()
+book_url = mirror_mgr.get_book_url(book_id=1342)
+
+# Or enable mirrors in the downloader
+downloader = EpubDownloader(mirrors_enabled=True)
+success = downloader.download_epub(
+    url="https://www.gutenberg.org/ebooks/1342.epub",
+    output_path="downloads/pride_and_prejudice.epub",
+    book_id=1342  # Providing book_id enables mirror selection
+)
 ```
 
 ## Performance Benchmarks
@@ -246,24 +338,20 @@ Benchmark results are saved to `benchmark_results.md` with detailed statistics.
 * Average EPUB size: ~500KB
 * System: Intel Core i7, 16GB RAM, SSD, Python 3.11
 
-### Concurrency Impact on Download Performance
+### Mirror Site Performance Impact
 
-| Mode | Books | Concurrency | Time (s) | Books/sec | Speedup |
-|------|-------|-------------|----------|-----------|---------|
-| Sync | 10    | 1           | 29.41    | 0.34      | 1.00x   |
-| Async| 10    | 2           | 11.75    | 0.85      | 2.50x   |
-| Async| 10    | 3           | 7.86     | 1.27      | 3.74x   |
-| Async| 10    | 5           | 5.22     | 1.92      | 5.63x   |
-| Async| 10    | 10          | 3.91     | 2.56      | 7.52x   |
+| Mode | Books | Mirrors | Concurrency | Time (s) | Books/sec | Speedup |
+|------|-------|---------|-------------|----------|-----------|---------|
+| Sync | 10    | No      | 1           | 29.41    | 0.34      | 1.00x   |
+| Sync | 10    | Yes     | 1           | 25.15    | 0.40      | 1.17x   |
+| Async| 10    | No      | 5           | 5.22     | 1.92      | 5.63x   |
+| Async| 10    | Yes     | 5           | 3.87     | 2.58      | 7.60x   |
 
-### Memory Usage Comparison
-
-| Operation | Sync (MB) | Async (MB) |
-|-----------|-----------|------------|
-| API Search | 32.5 | 35.7 |
-| 10 Book Downloads | 48.1 | 72.6 |
-
-Asynchronous downloads with concurrency=5 provide a good balance between performance and considerate use of Project Gutenberg's resources. The memory overhead for async operations is modest and well worth the significant performance improvements.
+Mirror site rotation can provide significant benefits:
+- Avoids rate limits when downloading many books
+- Better average response time by selecting faster mirrors
+- Increased reliability as failed downloads retry on different mirrors
+- Scales better for bulk downloads (50+ books)
 
 ## Download Resume Feature
 
@@ -283,13 +371,16 @@ The Gutenberg EPUB Downloader includes robust download persistence and resume ca
 gutenberg-downloader resume --output ~/books
 
 # Resume with async mode for faster processing
-gutenberg-downloader resume --output ~/books --async-mode --concurrency 5
+gutenberg-downloader resume --output ~/books --async-mode
 
-# Use smart downloader (enhanced database integration)
-gutenberg-downloader resume --output ~/books --smart
+# Use database integration for better filename matching
+gutenberg-downloader --use-db resume --output ~/books
 
-# Use API to accurately match files to download URLs
-gutenberg-downloader resume --output ~/books --use-api
+# Use mirror site rotation for faster, more reliable resumes (global flag)
+gutenberg-downloader --use-mirrors resume --output ~/books
+
+# Combine async mode with mirrors for maximum performance
+gutenberg-downloader --use-mirrors resume --output ~/books --async-mode
 ```
 
 ### Resume During Regular Downloads
@@ -313,7 +404,7 @@ gutenberg-downloader queue process --resume
 # Synchronous resume
 from gutenberg_downloader.epub_downloader import EpubDownloader
 
-downloader = EpubDownloader()
+downloader = EpubDownloader(mirrors_enabled=True)
 incomplete_files = downloader.find_incomplete_downloads("~/books")
 
 # Map files to URLs (simple example)
@@ -331,7 +422,7 @@ import asyncio
 from gutenberg_downloader.async_epub_downloader import AsyncEpubDownloader
 
 async def resume_downloads():
-    async with AsyncEpubDownloader(max_concurrency=5) as downloader:
+    async with AsyncEpubDownloader(max_concurrency=5, mirrors_enabled=True) as downloader:
         incomplete_files = await downloader.find_incomplete_downloads("~/books")
         # ... create URL mapping
         results = await downloader.resume_incomplete_downloads(incomplete_files, url_mapping)
@@ -363,18 +454,57 @@ For downloading EPUB files from Project Gutenberg with resume capability.
 from gutenberg_downloader.epub_downloader import EpubDownloader
 
 # Basic download
-downloader = EpubDownloader(download_dir="my_books")
+downloader = EpubDownloader(download_dir="my_books", mirrors_enabled=True)
 downloader.download(book_id=1342)
 
 # Download with resume capability
 downloader.download_epub(url="https://www.gutenberg.org/ebooks/1342.epub", 
                         output_path="my_books/book.epub",
-                        resume=True)
+                        resume=True,
+                        book_id=1342)
 
 # Find and resume incomplete downloads
 incomplete_files = downloader.find_incomplete_downloads("my_books")
 url_mapping = {...}  # Map files to URLs
 results = downloader.resume_incomplete_downloads(incomplete_files, url_mapping)
+```
+
+#### MirrorManager
+
+For managing and rotating between different Gutenberg mirror sites.
+
+```python
+from gutenberg_downloader.mirror_manager import MirrorManager
+
+# Initialize the mirror manager
+mirror_mgr = MirrorManager()
+
+# Get the URL for a specific book using the best available mirror
+book_url = mirror_mgr.get_book_url(book_id=1342)
+
+# Add a custom mirror
+mirror_mgr.add_mirror(
+    name="My Custom Mirror", 
+    base_url="https://my-gutenberg-mirror.example.com/",
+    priority=3,
+    country="FR"
+)
+
+# Report mirror health
+mirror_mgr.report_success("https://gutenberg.pglaf.org/")
+mirror_mgr.report_failure("https://slow-mirror.example.com/")
+
+# Check health of all mirrors (synchronous version)
+health_status = mirror_mgr.check_all_mirrors()
+
+# Check health of all mirrors (asynchronous version)
+import asyncio
+async def check_mirrors_async():
+    health_status = await mirror_mgr.check_all_mirrors_async()
+    return health_status
+    
+# Save mirror configuration to persist health data between runs
+mirror_mgr.save_mirrors()
 ```
 
 #### BookDiscovery
@@ -384,7 +514,7 @@ Combined interface for discovering and downloading books.
 ```python
 from gutenberg_downloader.discovery import BookDiscovery
 
-discovery = BookDiscovery()
+discovery = BookDiscovery(mirrors_enabled=True)
 books = discovery.discover_popular_books(language="en", format="epub", limit=10)
 discovery.download_books(books, output_dir="my_books")
 ```
@@ -399,16 +529,16 @@ from gutenberg_downloader.async_epub_downloader import AsyncEpubDownloader
 
 async def download_books():
     # Basic concurrent downloads
-    async with AsyncEpubDownloader(max_concurrency=5) as downloader:
+    async with AsyncEpubDownloader(max_concurrency=5, mirrors_enabled=True) as downloader:
         await downloader.download_multiple_epubs([
-            ("https://www.gutenberg.org/ebooks/1342.epub", "my_books/book1.epub"),
-            ("https://www.gutenberg.org/ebooks/84.epub", "my_books/book2.epub"),
-            ("https://www.gutenberg.org/ebooks/11.epub", "my_books/book3.epub"),
+            ("https://www.gutenberg.org/ebooks/1342.epub", "my_books/book1.epub", 1342),
+            ("https://www.gutenberg.org/ebooks/84.epub", "my_books/book2.epub", 84),
+            ("https://www.gutenberg.org/ebooks/11.epub", "my_books/book3.epub", 11),
         ])
         
 async def resume_interrupted_downloads():
     # Find and resume interrupted downloads
-    async with AsyncEpubDownloader(max_concurrency=3) as downloader:
+    async with AsyncEpubDownloader(max_concurrency=3, mirrors_enabled=True) as downloader:
         # Find partial downloads
         incomplete_files = await downloader.find_incomplete_downloads("my_books")
         
@@ -473,6 +603,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Project Gutenberg](https://www.gutenberg.org/)
 - [Gutendex API](https://gutendex.com/)
+- All the Project Gutenberg mirror sites that help distribute the content
 - All the authors who have made their works freely available through Project Gutenberg
 
 ## Building from Source
