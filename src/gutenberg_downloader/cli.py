@@ -36,8 +36,18 @@ def create_main_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="gutenberg-downloader",
-        description="Project Gutenberg EPUB Downloader",
+        description="Project Gutenberg EPUB Downloader - A tool for discovering and downloading ebooks with optimal defaults for speed and reliability",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="""
+Default optimizations enabled:
+  - Database usage (faster searches and resumable downloads)
+  - Mirror site rotation (avoids rate limits, faster downloads)
+  - Asynchronous mode (parallel downloads for better performance)
+  - Resume capability (can continue interrupted downloads)
+  - Skip existing files (won't re-download books you already have)
+
+Use the --no-* flags to disable any of these features if needed.
+        """
     )
     
     # Version info
@@ -61,9 +71,9 @@ def create_main_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
-        "--use-db",
+        "--no-db",
         action="store_true",
-        help="Use database for operations"
+        help="Disable database usage (database is used by default)"
     )
     
     parser.add_argument(
@@ -74,9 +84,9 @@ def create_main_parser() -> argparse.ArgumentParser:
     )
     
     parser.add_argument(
-        "--use-mirrors",
+        "--no-mirrors",
         action="store_true",
-        help="Use mirror site rotation to avoid rate limits"
+        help="Disable mirror site rotation (enabled by default)"
     )
     
     parser.add_argument(
@@ -116,9 +126,9 @@ def create_main_parser() -> argparse.ArgumentParser:
         help="Save results to JSON file"
     )
     discover_parser.add_argument(
-        "--async-mode",
+        "--sync-mode",
         action="store_true",
-        help="Use asynchronous mode for discovery"
+        help="Use synchronous mode for discovery (async mode is default)"
     )
     
     # Search command
@@ -153,9 +163,9 @@ def create_main_parser() -> argparse.ArgumentParser:
         help="Maximum number of results to display"
     )
     search_parser.add_argument(
-        "--async-mode",
+        "--sync-mode",
         action="store_true",
-        help="Use asynchronous mode for search"
+        help="Use synchronous mode for search (async mode is default)"
     )
     search_parser.add_argument(
         "--output", "-o",
@@ -180,15 +190,30 @@ def create_main_parser() -> argparse.ArgumentParser:
         help="Output directory for downloaded book"
     )
     download_parser.add_argument(
-        "--async-mode",
+        "--sync-mode",
         action="store_true",
-        help="Use asynchronous mode for download"
+        help="Use synchronous mode for download (async mode is default)"
     )
     
     # Download popular command
     download_popular_parser = subparsers.add_parser(
         "download-popular",
-        help="Download popular books"
+        help="Download popular books",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Download 10 popular books with all optimizations enabled
+  gutenberg-downloader download-popular --output ./popular/
+  
+  # Download 20 popular books with higher concurrency
+  gutenberg-downloader download-popular --limit 20 --concurrency 8 --output ./popular/
+  
+  # Download using synchronous mode (slower but uses less resources)
+  gutenberg-downloader download-popular --sync-mode --output ./popular/
+  
+  # Download with specific language filter
+  gutenberg-downloader download-popular --language fr --output ./french_books/
+"""
     )
     download_popular_parser.add_argument(
         "--limit",
@@ -209,14 +234,14 @@ def create_main_parser() -> argparse.ArgumentParser:
         help="Output directory for downloaded books"
     )
     download_popular_parser.add_argument(
-        "--async-mode",
+        "--sync-mode",
         action="store_true",
-        help="Use asynchronous mode for downloads"
+        help="Use synchronous mode for downloads (async mode is default)"
     )
     download_popular_parser.add_argument(
         "--concurrency",
         type=int,
-        default=3,
+        default=5,
         help="Maximum concurrent downloads (async mode only)"
     )
     
@@ -266,6 +291,11 @@ def create_main_parser() -> argparse.ArgumentParser:
         "status",
         help="Show mirror site status"
     )
+    mirror_status_parser.add_argument(
+        "--check-health",
+        action="store_true",
+        help="Force health check on all mirrors"
+    )
     
     # Mirror update command
     mirror_update_parser = mirror_subparsers.add_parser(
@@ -280,7 +310,7 @@ def create_main_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download science fiction books
+  # Download science fiction books (with all optimizations enabled by default)
   gutenberg-downloader filter-download --subjects "science fiction" --output ./scifi_books/
   
   # Download books matching multiple terms
@@ -289,8 +319,14 @@ Examples:
   # Download books with specific subjects and search terms
   gutenberg-downloader filter-download --subjects "adventure, pirates" --terms "treasure" --output ./pirate_books/
   
-  # Filter by language and minimum downloads
-  gutenberg-downloader filter-download --subjects "philosophy" --language fr --min-downloads 100 --output ./philosophy/
+  # Filter by language and minimum downloads, and disable mirror rotation
+  gutenberg-downloader --no-mirrors filter-download --subjects "philosophy" --language fr --min-downloads 100 --output ./philosophy/
+  
+  # Download without skipping existing files (to replace them)
+  gutenberg-downloader filter-download --subjects "science fiction" --no-skip-existing --output ./scifi_books/
+  
+  # Force download even if files exist (useful for testing mirror fallback)
+  gutenberg-downloader filter-download --subjects "science fiction" --force-download --output ./scifi/
 """
     )
     filter_download_parser.add_argument(
@@ -332,15 +368,42 @@ Examples:
         help="Match books with any of the search terms (default: must match all terms)"
     )
     filter_download_parser.add_argument(
-        "--skip-existing",
+        "--no-skip-existing",
         action="store_true",
-        help="Skip books that already exist in the output directory"
+        help="Don't skip books that already exist in the output directory"
+    )
+    
+    filter_download_parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Disable resume capability for interrupted downloads"
+    )
+    
+    filter_download_parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Force download even if files already exist (for testing mirror fallback)"
     )
     
     # Resume download command
     resume_parser = subparsers.add_parser(
         "resume",
-        help="Resume interrupted downloads"
+        help="Resume interrupted downloads",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Resume all interrupted downloads (with optimal defaults)
+  gutenberg-downloader resume --output ./downloads/
+  
+  # Resume with synchronous mode (slower but uses fewer resources)
+  gutenberg-downloader resume --sync-mode --output ./downloads/
+  
+  # Resume without using mirror sites
+  gutenberg-downloader --no-mirrors resume --output ./downloads/
+  
+  # Show detailed progress when resuming
+  gutenberg-downloader resume --output ./downloads/ --verbose
+"""
     )
     resume_parser.add_argument(
         "--output", "-o",
@@ -349,9 +412,9 @@ Examples:
         help="Directory containing interrupted downloads"
     )
     resume_parser.add_argument(
-        "--async-mode",
+        "--sync-mode",
         action="store_true",
-        help="Use asynchronous mode for resume"
+        help="Use synchronous mode for resume (async mode is default)"
     )
     
     return parser
@@ -372,13 +435,14 @@ def discover_command(args: argparse.Namespace) -> int:
         
         print(f"🔍 Finding up to {args.limit} popular books in language '{args.language}'...")
         
-        if args.use_db:
+        if args.database_enabled:
             print(f"📊 Using database: {args.db_path}")
             from .api_discovery_db import APIBookDiscoveryDB
             discovery_service = APIBookDiscoveryDB(db_path=args.db_path)
-        elif args.async_mode:
+        # Default to async mode unless explicitly requested otherwise
+        elif not getattr(args, 'sync_mode', False):
             print("⚡ Using asynchronous discovery")
-            if args.use_mirrors:
+            if args.mirrors_enabled:
                 print("🔄 Using mirror rotation for requests")
             
             from .async_api_discovery import AsyncAPIBookDiscovery
@@ -390,7 +454,9 @@ def discover_command(args: argparse.Namespace) -> int:
         
         with discovery_service:
             # Discover books
-            if args.async_mode and hasattr(discovery_service, "discover_popular_english_epubs_async"):
+            # Use async mode by default unless sync_mode is specified
+            async_mode = not getattr(args, 'sync_mode', False)
+            if async_mode and hasattr(discovery_service, "discover_popular_english_epubs_async"):
                 # Use asyncio to run the async method
                 import asyncio
                 books = asyncio.run(
@@ -470,11 +536,11 @@ def search_command(args: argparse.Namespace) -> int:
         print(f"📊 Max results: {args.limit}")
         
         # Setup appropriate discovery service
-        if args.full_text and not args.use_db:
+        if args.full_text and not args.database_enabled:
             print("⚠️ Full-text search requires database. Enabling database mode.")
-            args.use_db = True
+            args.database_enabled = True
         
-        if args.use_db:
+        if args.database_enabled:
             print(f"📊 Using database: {args.db_path}")
             from .database import BookDatabase
             db = BookDatabase(db_path=args.db_path)
@@ -491,7 +557,8 @@ def search_command(args: argparse.Namespace) -> int:
                     subject=args.subject,
                     limit=args.limit
                 )
-        elif args.async_mode:
+        # Default to async mode unless sync mode is explicitly requested
+        elif not getattr(args, 'sync_mode', False):
             print("⚡ Using asynchronous search")
             from .async_api_discovery import AsyncAPIBookDiscovery
             discovery_service = AsyncAPIBookDiscovery()
@@ -581,9 +648,13 @@ def search_command(args: argparse.Namespace) -> int:
             # Add formats info if available
             formats = []
             if "formats" in book and book["formats"]:
-                formats = list(book["formats"].keys())
+                if isinstance(book["formats"], dict):
+                    formats = list(book["formats"].keys())
+                elif isinstance(book["formats"], list):
+                    formats = book["formats"]
             elif "download_links" in book and book["download_links"]:
-                formats = list(book["download_links"].keys())
+                if isinstance(book["download_links"], dict):
+                    formats = list(book["download_links"].keys())
                 
             if formats:
                 print(f"   Formats: {', '.join(formats[:5])}")
@@ -626,9 +697,11 @@ def download_command(args: argparse.Namespace) -> int:
         args.output.mkdir(parents=True, exist_ok=True)
         
         # Setup appropriate discovery service
-        mirrors_enabled = getattr(args, 'use_mirrors', False)
+        mirrors_enabled = getattr(args, 'mirrors_enabled', True)
         
-        if args.async_mode:
+        # Default to async mode unless sync mode is explicitly requested
+        async_mode = not getattr(args, 'sync_mode', False)
+        if async_mode:
             print("⚡ Using asynchronous download")
             if mirrors_enabled:
                 print("🔄 Using mirror rotation for downloads")
@@ -670,20 +743,35 @@ def download_command(args: argparse.Namespace) -> int:
                 # Download the book
                 print(f"⬇️  Downloading...")
                 
-                success = asyncio.run(
-                    discovery_service.download_book_epub_async(
-                        args.book_id,
-                        output_path,
-                        book_details=book_details,
-                        progress_bar=True
-                    )
-                )
+                # Fall back to using the synchronous download option which is more reliable
+                print("⚠️ Falling back to synchronous download for better reliability")
+                from .epub_downloader import EpubDownloader
                 
-                if success:
-                    print(f"✅ Successfully downloaded book to {output_path}")
-                    return 0
-                else:
-                    print(f"❌ Failed to download book {args.book_id}")
+                try:
+                    # Create a synchronous downloader with mirror support
+                    downloader = EpubDownloader(mirrors_enabled=mirrors_enabled)
+                    
+                    # Generate direct URL based on book ID (avoid redirect)
+                    epub_url = f"https://www.gutenberg.org/cache/epub/{args.book_id}/pg{args.book_id}.epub"
+                    
+                    # Attempt download
+                    success = downloader.download_epub(
+                        url=epub_url,
+                        output_path=output_path,
+                        progress_bar=True,
+                        resume=True,
+                        book_id=args.book_id
+                    )
+                    
+                    if success:
+                        print(f"✅ Successfully downloaded book to {output_path}")
+                        return 0
+                    else:
+                        print(f"❌ Failed to download book {args.book_id}")
+                        return 1
+                except Exception as e:
+                    logger.error(f"Error in download process: {e}")
+                    print(f"❌ Failed to download book {args.book_id} due to an error")
                     return 1
         else:
             print("🔍 Using synchronous download")
@@ -725,14 +813,16 @@ def download_command(args: argparse.Namespace) -> int:
                     success = discovery_service.download_book(
                         args.book_id,
                         output_path,
-                        book_details=book_details
+                        book_details=book_details,
+                        resume=True  # Enable resume by default
                     )
                 else:
                     # Fallback to download_book_epub if download_book not available
                     success = discovery_service.download_book_epub(
                         args.book_id,
                         output_path,
-                        book_details=book_details
+                        book_details=book_details,
+                        resume=True  # Enable resume by default
                     )
                 
                 if success:
@@ -767,71 +857,98 @@ def download_popular_command(args: argparse.Namespace) -> int:
         args.output.mkdir(parents=True, exist_ok=True)
         
         # Setup appropriate discovery service
-        mirrors_enabled = getattr(args, 'use_mirrors', False)
+        mirrors_enabled = getattr(args, 'mirrors_enabled', True)
         
-        if args.async_mode:
+        # Default to async mode unless sync mode is explicitly requested
+        async_mode = not getattr(args, 'sync_mode', False)
+        
+        if async_mode:
             print("⚡ Using asynchronous discovery and download")
             if mirrors_enabled:
                 print("🔄 Using mirror rotation for downloads")
             
             print(f"🔄 Concurrency level: {args.concurrency}")
             
-            from .async_api_discovery import AsyncAPIBookDiscovery
-            discovery_service = AsyncAPIBookDiscovery(max_concurrency=args.concurrency)
+            # Get popular books
+            import asyncio
+            print(f"🔍 Discovering popular books...")
             
-            with discovery_service:
-                # Get popular books
-                import asyncio
-                print(f"🔍 Discovering popular books...")
-                
-                # First, get the book list
-                books = asyncio.run(
-                    discovery_service.discover_popular_english_epubs_async(limit=args.limit)
-                )
-                
-                if not books:
-                    print("❌ No books found")
-                    return 1
-                
-                print(f"\n✅ Found {len(books)} popular books")
-                print("─" * 50)
-                
-                # Extract book IDs
-                book_ids = []
-                for i, book in enumerate(books, 1):
-                    book_id = book.get("book_id")
-                    title = book.get("title", "Unknown Title")
-                    author = book.get("metadata", {}).get("author", "Unknown Author")
+            # Create a new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Adjust concurrency to be at least 3 and at most 15
+            concurrency = max(3, min(args.concurrency, 15))
+            
+            try:
+                # Define a self-contained async function to perform all operations
+                async def run_async_operations():
+                    from .async_api_discovery import AsyncAPIBookDiscovery
                     
-                    print(f"{i}. [{book_id}] {title} by {author}")
-                    book_ids.append(book_id)
+                    # Create a fresh instance each time
+                    async with AsyncAPIBookDiscovery(max_concurrency=concurrency) as discovery:
+                        # Get the book list
+                        books = await discovery.discover_popular_english_epubs_async(limit=args.limit)
+                        
+                        if not books:
+                            return None, None
+                        
+                        # Extract book IDs
+                        book_ids = []
+                        book_details = []
+                        for book in books:
+                            book_ids.append(book.get("book_id"))
+                            book_details.append({
+                                "id": book.get("book_id"),
+                                "title": book.get("title", "Unknown Title"),
+                                "author": book.get("metadata", {}).get("author", "Unknown Author")
+                            })
+                        
+                        # Download books in parallel
+                        results = await discovery.download_multiple_books_async(
+                            book_ids=book_ids,
+                            output_dir=args.output,
+                            progress_bar=True,
+                            skip_existing=True,
+                            resume=True  # Enable resume by default
+                        )
+                        
+                        return results, book_details
                 
-                print("\n⬇️  Starting downloads...")
+                # Run the entire async operation in one go
+                results, book_details = loop.run_until_complete(run_async_operations())
+            finally:
+                # Make sure to close the loop to free resources
+                loop.close()
                 
-                # Download books in parallel
-                results = asyncio.run(
-                    discovery_service.download_multiple_books_async(
-                        book_ids=book_ids,
-                        output_dir=args.output,
-                        progress_bar=True,
-                        skip_existing=True,
-                    )
-                )
-                
-                # Count successes and failures
-                successes = sum(1 for success in results.values() if success)
-                failures = sum(1 for success in results.values() if not success)
-                
-                print("\n─" * 50)
-                print(f"✅ Successfully downloaded: {successes}")
-                if failures > 0:
-                    print(f"❌ Failed downloads: {failures}")
-                print(f"📂 Books saved to: {args.output}")
-                
-                return 0 if failures == 0 else 1
+            # Check if no books were found
+            if results is None or book_details is None:
+                print("❌ No books found")
+                return 1
+            
+            # Display the book details
+            print(f"\n✅ Found {len(book_details)} popular books")
+            print("─" * 50)
+            
+            for i, book in enumerate(book_details, 1):
+                print(f"{i}. [{book['id']}] {book['title']} by {book['author']}")
+            
+            print("\n⬇️  Downloads completed...")
+            
+            # Count successes and failures
+            successes = sum(1 for success in results.values() if success)
+            failures = sum(1 for success in results.values() if not success)
+            
+            print("\n─" * 50)
+            print(f"✅ Successfully downloaded: {successes}")
+            if failures > 0:
+                print(f"❌ Failed downloads: {failures}")
+            print(f"📂 Books saved to: {args.output}")
+            
+            return 0 if failures == 0 else 1
                 
         else:
-            print("🔍 Using synchronous discovery and download")
+            print("🔍 Using synchronous discovery and download (slower but lower resource usage)")
             if mirrors_enabled:
                 print("🔄 Using mirror rotation for downloads")
             
@@ -926,7 +1043,12 @@ def filter_download_command(args: argparse.Namespace) -> int:
         args.output.mkdir(parents=True, exist_ok=True)
         
         # Initialize downloader with mirror support if requested
-        mirrors_enabled = getattr(args, 'use_mirrors', False)
+        mirrors_enabled = getattr(args, 'mirrors_enabled', True)
+        database_enabled = getattr(args, 'database_enabled', True)
+        resume_enabled = not getattr(args, 'no_resume', False)
+        # skip_existing is True by default unless no-skip-existing is specified
+        skip_existing = not getattr(args, 'no_skip_existing', False)
+        
         with EnhancedDownloader(db_path=args.db_path, mirrors_enabled=mirrors_enabled) as downloader:
             # Parse search terms and subjects
             search_terms = None
@@ -953,10 +1075,27 @@ def filter_download_command(args: argparse.Namespace) -> int:
                 print(f"⬇️  Min downloads: {args.min_downloads}")
             if mirrors_enabled:
                 print(f"🔄 Mirror sites: Enabled")
+            if database_enabled:
+                print(f"📊 Database: Enabled")
+            if resume_enabled:
+                print(f"🔁 Resume capability: Enabled")
+            else:
+                print(f"🔁 Resume capability: Disabled (--no-resume flag used)")
+                
+            if skip_existing:
+                print(f"⏩ Skip existing files: Enabled")
+            else:
+                print(f"⏩ Skip existing files: Disabled (--no-skip-existing flag used)")
+                
             print(f"📊 Limit: {args.limit}")
             print("─" * 50)
             
-            # Execute search and download
+            # Check for force_download flag
+            force_download = getattr(args, 'force_download', False)
+            if force_download:
+                print(f"🔄 Force download: Enabled (will redownload existing files)")
+            
+            # Execute search and download with the initialized skip_existing variable
             success_count, failed_count = downloader.search_and_download(
                 search_terms=search_terms,
                 language=args.language,
@@ -965,7 +1104,9 @@ def filter_download_command(args: argparse.Namespace) -> int:
                 output_dir=args.output,
                 limit=args.limit,
                 match_any_term=args.match_any,
-                skip_existing=args.skip_existing
+                skip_existing=skip_existing,
+                resume=resume_enabled,
+                force_download=force_download
             )
             
             # Print summary
@@ -1123,7 +1264,7 @@ def mirror_status_command(args: argparse.Namespace) -> int:
     """
     try:
         print("\n🔄 Mirror Site Status")
-        print("─" * 50)
+        print("─" * 70)
         
         mirror_manager = MirrorManager()
         mirrors = mirror_manager.get_mirrors()
@@ -1132,20 +1273,117 @@ def mirror_status_command(args: argparse.Namespace) -> int:
             print("No mirror sites configured")
             return 0
         
-        print(f"Total mirror sites: {len(mirrors)}")
-        print(f"Active mirror sites: {sum(1 for m in mirrors if m.active)}")
-        print("─" * 50)
+        # Get usage statistics
+        primary_mirror = next((m for m in mirrors if m.base_url == mirror_manager.primary_site), None)
+        primary_name = primary_mirror.name if primary_mirror else "Project Gutenberg Main"
         
+        # Get config file path
+        config_path = mirror_manager.mirrors_file
+        
+        # Print summary
+        print(f"📊 Summary:")
+        print(f"  Total mirror sites: {len(mirrors)}")
+        print(f"  Active mirror sites: {sum(1 for m in mirrors if m.active)}")
+        print(f"  Primary mirror: {primary_name}")
+        print(f"  Configuration: {config_path}")
+        if hasattr(mirror_manager, 'recently_used') and mirror_manager.recently_used:
+            print(f"  Recently used: {len(mirror_manager.recently_used)} mirrors")
+        
+        # Check if health assessment is needed or requested
+        import time
+        current_time = time.time()
+        need_health_check = (
+            hasattr(args, 'check_health') and args.check_health
+        ) or any(
+            not m.last_checked or 
+            (current_time - m.last_checked > 3600)  # Older than 1 hour
+            for m in mirrors
+        )
+        
+        if need_health_check:
+            print("\n⏳ Checking mirror health (this may take a few moments)...")
+            try:
+                health_results = mirror_manager.check_all_mirrors()
+                print("✅ Health check completed")
+            except Exception as e:
+                logger.error(f"Error during health check: {e}")
+                print("⚠️ Health check failed, using cached health scores")
+                health_results = {m.base_url: True if m.active and m.health_score > 0.5 else False for m in mirrors}
+        else:
+            print("\n💾 Using cached health status")
+            health_results = {m.base_url: True if m.active and m.health_score > 0.5 else False for m in mirrors}
+            
         # Print mirror details
-        print(f"{'Name':<25} {'URL':<35} {'Health':<10} {'Priority':<10} {'Country':<10}")
-        print("─" * 85)
+        print("\n📋 Mirror Details:")
+        print("─" * 70)
+        print(f"{'Name':<25} {'Status':<8} {'Health':<8} {'Priority':<8} {'Country':<8} {'Last Check':<15}")
+        print("─" * 70)
         
-        for mirror in sorted(mirrors, key=lambda m: (-m.priority, -m.health_score)):
-            health_str = f"{mirror.health_score:.2f}"
-            status = "✅" if mirror.active else "❌"
-            print(f"{mirror.name[:25]:<25} {mirror.base_url[:35]:<35} {health_str:<10} {mirror.priority:<10} {mirror.country or 'Unknown':<10} {status}")
+        # Prepare data for display
+        mirror_data = []
+        for mirror in mirrors:
+            # Format last_checked timestamp if available
+            if mirror.last_checked:
+                import datetime
+                last_check = datetime.datetime.fromtimestamp(mirror.last_checked).strftime('%Y-%m-%d %H:%M')
+            else:
+                last_check = "Never"
+                
+            # Create health bar visualization
+            health_bar = ""
+            health_value = mirror.health_score
+            if health_value >= 0.8:
+                health_bar = "🟢"  # High health (green)
+            elif health_value >= 0.5:
+                health_bar = "🟡"  # Medium health (yellow)
+            elif health_value > 0.1:
+                health_bar = "🟠"  # Low health (orange)
+            else:
+                health_bar = "🔴"  # Critical (red)
+                
+            # Prepare status indicator
+            status = "✅ Active" if mirror.active else "❌ Inactive"
+            
+            # Add to data for display
+            mirror_data.append({
+                'mirror': mirror,
+                'last_check': last_check,
+                'health_bar': health_bar,
+                'status': status
+            })
         
-        print("\n")
+        # Sort mirrors by priority, then health score
+        mirror_data.sort(key=lambda x: (-x['mirror'].priority, -x['mirror'].health_score))
+        
+        # Display mirror data
+        for data in mirror_data:
+            mirror = data['mirror']
+            health_str = f"{data['health_bar']} {mirror.health_score:.2f}"
+            name_display = mirror.name[:25]
+            if mirror.base_url == mirror_manager.primary_site:
+                name_display = f"* {name_display.strip()}"  # Mark primary mirror
+                
+            print(f"{name_display:<25} {data['status']:<8} {health_str:<8} {mirror.priority:<8} "
+                  f"{mirror.country or 'N/A':<8} {data['last_check']:<15}")
+        
+        # Print legend
+        print("\n🔍 Legend:")
+        print("  🟢 High health (0.8-1.0)")
+        print("  🟡 Medium health (0.5-0.79)")
+        print("  🟠 Low health (0.1-0.49)")
+        print("  🔴 Critical (0.0-0.09)")
+        print("  * Primary mirror")
+        
+        # Additional commands help
+        print("\n💡 Additional Commands:")
+        print("  Update mirror list: gutenberg-downloader mirrors update")
+        print("  Use specific mirror: gutenberg-downloader --preferred-mirrors URL download 1342")
+        print("  Disable mirrors: gutenberg-downloader --no-mirrors download 1342")
+        
+        # Save mirrors to preserve health info
+        mirror_manager.save_mirrors()
+        print("\n💾 Mirror health information saved")
+        
         return 0
     
     except Exception as e:
@@ -1353,9 +1591,11 @@ def resume_command(args: argparse.Namespace) -> int:
         args.output.mkdir(parents=True, exist_ok=True)
         
         # Setup appropriate discovery service and downloader
-        mirrors_enabled = getattr(args, 'use_mirrors', False)
+        mirrors_enabled = getattr(args, 'mirrors_enabled', True)
         
-        if args.async_mode:
+        # Default to async mode unless sync mode is explicitly requested
+        async_mode = not getattr(args, 'sync_mode', False)
+        if async_mode:
             print("⚡ Using asynchronous download")
             from .async_epub_downloader import AsyncEpubDownloader
             downloader = AsyncEpubDownloader(mirrors_enabled=mirrors_enabled)
@@ -1389,49 +1629,78 @@ def resume_command(args: argparse.Namespace) -> int:
         with downloader:
             print("\n🔍 Searching for incomplete downloads...")
             
-            if isinstance(downloader, AsyncEpubDownloader):
+            if async_mode:  # async_mode is already defined above
                 # For async downloader
                 import asyncio
+                from .async_epub_downloader import AsyncEpubDownloader  # Import in the function to ensure it's available
                 
-                # Find incomplete downloads (not truly async but that's ok)
-                incomplete_files = downloader.find_incomplete_downloads(args.output)
+                # Create a new event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 
-                if not incomplete_files:
+                try:
+                    # Define a self-contained async function to perform all operations
+                    async def run_async_operations():
+                        # Create the downloader inside the async function
+                        async with AsyncEpubDownloader(mirrors_enabled=mirrors_enabled) as async_downloader:
+                            # Find incomplete downloads
+                            incomplete_files = await async_downloader.find_incomplete_downloads(args.output)
+                            
+                            if not incomplete_files:
+                                return None, None
+                            
+                            # Process file information
+                            file_info = []
+                            for file_path in incomplete_files:
+                                # Try to extract book ID from filename
+                                book_id = 0
+                                filename = file_path.name
+                                if filename.startswith("pg") and filename.endswith(".epub"):
+                                    try:
+                                        book_id_str = filename[2:].split(".")[0]
+                                        if book_id_str.isdigit():
+                                            book_id = int(book_id_str)
+                                    except (ValueError, IndexError):
+                                        book_id = 0
+                                
+                                # Generate URL from book ID
+                                if book_id > 0:
+                                    # First try base Project Gutenberg URL
+                                    from .constants import BASE_URL
+                                    url = f"{BASE_URL}/ebooks/{book_id}.epub"
+                                    url_mapping[file_path] = url
+                                
+                                file_info.append({
+                                    "path": file_path,
+                                    "name": file_path.name
+                                })
+                            
+                            # Resume downloads in parallel
+                            results = await async_downloader.resume_incomplete_downloads(
+                                incomplete_files,
+                                url_mapping=url_mapping,
+                                progress_bar=True
+                            )
+                            
+                            return results, file_info
+                    
+                    # Run the entire async operation in one go
+                    results, file_info = loop.run_until_complete(run_async_operations())
+                finally:
+                    # Close the event loop
+                    loop.close()
+                
+                # Check if no incomplete files were found
+                if results is None or file_info is None:
                     print("✅ No incomplete downloads found")
                     return 0
                 
-                print(f"\n🔄 Found {len(incomplete_files)} incomplete downloads:")
-                for i, file_path in enumerate(incomplete_files, 1):
-                    print(f"{i}. {file_path.name}")
-                    
-                    # Try to extract book ID from filename
-                    book_id = 0
-                    filename = file_path.name
-                    if filename.startswith("pg") and filename.endswith(".epub"):
-                        try:
-                            book_id_str = filename[2:].split(".")[0]
-                            if book_id_str.isdigit():
-                                book_id = int(book_id_str)
-                        except (ValueError, IndexError):
-                            book_id = 0
-                    
-                    # Generate URL from book ID
-                    if book_id > 0:
-                        # First try base Project Gutenberg URL
-                        from .constants import BASE_URL
-                        url = f"{BASE_URL}/ebooks/{book_id}.epub"
-                        url_mapping[file_path] = url
+                # Display information about the found files
+                print(f"\n🔄 Found {len(file_info)} incomplete downloads:")
+                for i, info in enumerate(file_info, 1):
+                    print(f"{i}. {info['name']}")
                 
-                print("\n⬇️ Resuming downloads...")
-                
-                # Resume downloads in parallel
-                results = asyncio.run(
-                    downloader.resume_incomplete_downloads(
-                        incomplete_files,
-                        url_mapping=url_mapping,
-                        progress_bar=True
-                    )
-                )
+                print("\n⬇️ Downloads completed...")
                 
                 # Count successes and failures
                 successes = sum(1 for success in results.values() if success)
@@ -1447,54 +1716,59 @@ def resume_command(args: argparse.Namespace) -> int:
                 
             else:
                 # For sync downloader
-                incomplete_files = downloader.find_incomplete_downloads(args.output)
+                from .epub_downloader import EpubDownloader  # Import here to make sure it's available
                 
-                if not incomplete_files:
-                    print("✅ No incomplete downloads found")
-                    return 0
-                
-                print(f"\n🔄 Found {len(incomplete_files)} incomplete downloads:")
-                for i, file_path in enumerate(incomplete_files, 1):
-                    print(f"{i}. {file_path.name}")
+                # Create a fresh instance 
+                with EpubDownloader(mirrors_enabled=mirrors_enabled) as sync_downloader:
+                    # Find incomplete downloads
+                    incomplete_files = sync_downloader.find_incomplete_downloads(args.output)
                     
-                    # Try to extract book ID from filename
-                    book_id = 0
-                    filename = file_path.name
-                    if filename.startswith("pg") and filename.endswith(".epub"):
-                        try:
-                            book_id_str = filename[2:].split(".")[0]
-                            if book_id_str.isdigit():
-                                book_id = int(book_id_str)
-                        except (ValueError, IndexError):
-                            book_id = 0
+                    if not incomplete_files:
+                        print("✅ No incomplete downloads found")
+                        return 0
                     
-                    # Generate URL from book ID
-                    if book_id > 0:
-                        # First try base Project Gutenberg URL
-                        from .constants import BASE_URL
-                        url = f"{BASE_URL}/ebooks/{book_id}.epub"
-                        url_mapping[file_path] = url
-                
-                print("\n⬇️ Resuming downloads...")
-                
-                # Resume downloads sequentially
-                results = downloader.resume_incomplete_downloads(
-                    incomplete_files,
-                    url_mapping=url_mapping,
-                    progress_bar=True
-                )
-                
-                # Count successes and failures
-                successes = sum(1 for success in results.values() if success)
-                failures = sum(1 for success in results.values() if not success)
-                
-                print("\n─" * 50)
-                print(f"✅ Successfully resumed: {successes}")
-                if failures > 0:
-                    print(f"❌ Failed to resume: {failures}")
-                print(f"📂 Books saved to: {args.output}")
-                
-                return 0 if failures == 0 else 1
+                    print(f"\n🔄 Found {len(incomplete_files)} incomplete downloads:")
+                    for i, file_path in enumerate(incomplete_files, 1):
+                        print(f"{i}. {file_path.name}")
+                        
+                        # Try to extract book ID from filename
+                        book_id = 0
+                        filename = file_path.name
+                        if filename.startswith("pg") and filename.endswith(".epub"):
+                            try:
+                                book_id_str = filename[2:].split(".")[0]
+                                if book_id_str.isdigit():
+                                    book_id = int(book_id_str)
+                            except (ValueError, IndexError):
+                                book_id = 0
+                        
+                        # Generate URL from book ID
+                        if book_id > 0:
+                            # First try base Project Gutenberg URL
+                            from .constants import BASE_URL
+                            url = f"{BASE_URL}/ebooks/{book_id}.epub"
+                            url_mapping[file_path] = url
+                    
+                    print("\n⬇️ Resuming downloads...")
+                    
+                    # Resume downloads sequentially
+                    results = sync_downloader.resume_incomplete_downloads(
+                        incomplete_files,
+                        url_mapping=url_mapping,
+                        progress_bar=True
+                    )
+                    
+                    # Count successes and failures
+                    successes = sum(1 for success in results.values() if success)
+                    failures = sum(1 for success in results.values() if not success)
+                    
+                    print("\n─" * 50)
+                    print(f"✅ Successfully resumed: {successes}")
+                    if failures > 0:
+                        print(f"❌ Failed to resume: {failures}")
+                    print(f"📂 Books saved to: {args.output}")
+                    
+                    return 0 if failures == 0 else 1
     
     except Exception as e:
         logger.error(f"Error resuming downloads: {e}")
@@ -1529,8 +1803,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     
     # Ensure all commands have access to global options
-    if not hasattr(args, 'use_mirrors'):
-        args.use_mirrors = False
+    if not hasattr(args, 'no_mirrors'):
+        args.no_mirrors = False
+        
+    # Set mirrors_enabled based on no_mirrors flag (default is enabled)
+    args.mirrors_enabled = not args.no_mirrors
+    
+    # Set database_enabled based on no_db flag (default is enabled)
+    args.database_enabled = not getattr(args, 'no_db', False)
         
     # Main commands
     if args.command == "discover":

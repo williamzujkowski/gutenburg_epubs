@@ -115,6 +115,10 @@ class CatalogImporter:
                 if not self.download_with_progress(self.CSV_CATALOG_URL, csv_path):
                     return 0
         
+        # Load genre extraction helper
+        from .api_discovery import APIBookDiscovery
+        api_discovery = APIBookDiscovery()
+        
         # Parse CSV
         books_data = []
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -124,21 +128,38 @@ class CatalogImporter:
                 # Skip non-English books without EPUB
                 if row.get('Language') != 'en':
                     continue
+                
+                # Extract subjects and bookshelves
+                subjects = row.get('Subjects', '').split('; ') if row.get('Subjects') else []
+                bookshelves = row.get('Bookshelves', '').split('; ') if row.get('Bookshelves') else []
+                
+                # Extract genre classifications from subjects and bookshelves
+                genres = api_discovery._extract_genres_from_metadata(subjects, bookshelves)
                     
                 # Create book data structure similar to API
                 book_data = {
                     'id': int(row.get('Text#', 0)),
                     'title': row.get('Title', 'Unknown'),
                     'authors': [{'name': row.get('Authors', 'Unknown')}],
-                    'subjects': row.get('Subjects', '').split('; ') if row.get('Subjects') else [],
+                    'subjects': subjects,
+                    'bookshelves': bookshelves,
+                    'genres': genres,
                     'languages': ['en'],
                     'formats': {},
-                    'download_count': 0  # CSV doesn't have download counts
+                    'download_count': 0,  # CSV doesn't have download counts
+                    'media_type': 'Text',
+                    'raw_data': dict(row)  # Store the original row
                 }
                 
+                # Add Library of Congress Classification if available
+                if row.get('LoCC'):
+                    book_data['locc'] = row.get('LoCC')
+                
                 # Add format URLs if available
-                if row.get('ebook#'):
-                    book_data['formats']['text/html'] = f"https://www.gutenberg.org/ebooks/{row['ebook#']}"
+                if row.get('Text#'):
+                    book_id = row.get('Text#')
+                    # Direct URL to the potential EPUB file
+                    book_data['formats']['application/epub+zip'] = f"https://www.gutenberg.org/ebooks/{book_id}.epub.images"
                 
                 books_data.append(book_data)
         
@@ -165,7 +186,9 @@ class CatalogImporter:
             ns = {
                 'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
                 'dc': 'http://purl.org/dc/terms/',
-                'pgterms': 'http://www.gutenberg.org/2009/pgterms/'
+                'dcam': 'http://purl.org/dc/dcam/',
+                'pgterms': 'http://www.gutenberg.org/2009/pgterms/',
+                'cc': 'http://web.resource.org/cc/'
             }
             
             # Get book ID from filename
@@ -186,8 +209,24 @@ class CatalogImporter:
                 agent = creator.find('.//pgterms:agent', ns)
                 if agent is not None:
                     name = agent.find('.//pgterms:name', ns)
+                    birth_year = agent.find('.//pgterms:birthdate', ns)
+                    death_year = agent.find('.//pgterms:deathdate', ns)
+                    
                     if name is not None:
-                        authors.append({'name': name.text})
+                        author_data = {'name': name.text}
+                        if birth_year is not None:
+                            try:
+                                author_data['birth_year'] = int(birth_year.text)
+                            except (ValueError, TypeError):
+                                pass
+                                
+                        if death_year is not None:
+                            try:
+                                author_data['death_year'] = int(death_year.text)
+                            except (ValueError, TypeError):
+                                pass
+                                
+                        authors.append(author_data)
             
             # Language
             language = ebook.find('.//dc:language', ns)
@@ -204,14 +243,41 @@ class CatalogImporter:
                 if value is not None:
                     subjects.append(value.text)
             
+            # LCC (Library of Congress Classification)
+            lcc = None
+            for subject in ebook.findall('.//dc:subject', ns):
+                memberOf = subject.find('./dcam:memberOf', ns)
+                if memberOf is not None and '{http://purl.org/dc/terms/LCC}' in memberOf.get('{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource', ''):
+                    value = subject.find('.//rdf:value', ns)
+                    if value is not None:
+                        lcc = value.text
+                        break
+            
+            # Publisher
+            publisher = ebook.find('.//dc:publisher', ns)
+            publisher_text = publisher.text if publisher is not None else None
+            
+            # Publication date
+            pub_date = ebook.find('.//dc:issued', ns)
+            pub_date_text = pub_date.text if pub_date is not None else None
+            
+            # Rights (license)
+            rights = ebook.find('.//dc:rights', ns)
+            rights_text = rights.text if rights is not None else None
+            
             # Formats
             formats = {}
             for file_elem in ebook.findall('.//pgterms:file', ns):
                 about = file_elem.get('{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about')
                 if about:
                     format_elem = file_elem.find('.//dc:format/rdf:value', ns)
-                    if format_elem is not None and 'epub' in format_elem.text.lower():
-                        formats['application/epub+zip'] = about
+                    if format_elem is not None:
+                        format_type = format_elem.text
+                        formats[format_type] = about
+                        
+                        # Special case for EPUB
+                        if 'epub' in format_type.lower():
+                            formats['application/epub+zip'] = about
             
             # Download count
             downloads = ebook.find('.//pgterms:downloads', ns)
@@ -222,14 +288,41 @@ class CatalogImporter:
                 except ValueError:
                     pass
             
+            # Media type
+            media_type = "Text"  # Default for most Gutenberg books
+            
+            # Capture raw XML as a string for reference
+            raw_xml = ET.tostring(ebook, encoding='unicode')
+            
+            # Extract bookshelves (not directly in RDF, but can be inferred from certain subject types)
+            bookshelves = []
+            
+            # Load genre extraction helper
+            from .api_discovery import APIBookDiscovery
+            api_discovery = APIBookDiscovery()
+            
+            # Extract genre classifications
+            genres = api_discovery._extract_genres_from_metadata(subjects, bookshelves)
+            
             return {
                 'id': book_id,
                 'title': title_text,
                 'authors': authors,
                 'subjects': subjects,
+                'bookshelves': bookshelves,
+                'genres': genres,
                 'languages': [lang_code],
                 'formats': formats,
-                'download_count': download_count
+                'download_count': download_count,
+                'media_type': media_type,
+                'publisher': publisher_text,
+                'publication_date': pub_date_text,
+                'rights': rights_text,
+                'lcc': lcc,
+                'raw_data': {
+                    'xml': raw_xml[:10000],  # Limit size for storage
+                    'source': 'rdf'
+                }
             }
             
         except Exception as e:

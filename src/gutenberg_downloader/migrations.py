@@ -505,6 +505,144 @@ MIGRATIONS = [
             DROP TABLE IF EXISTS download_stats;
             DROP TABLE IF EXISTS session_stats;
         """)
+    ),
+    Migration(
+        version="0.5.0",
+        description="Enhanced metadata: Add bookshelves and genres tables",
+        upgrade_func=lambda conn: conn.executescript("""
+            -- Create bookshelves table
+            CREATE TABLE IF NOT EXISTS bookshelves (
+                bookshelf_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                UNIQUE(name)
+            );
+            
+            -- Create book_bookshelves table (many-to-many)
+            CREATE TABLE IF NOT EXISTS book_bookshelves (
+                book_id INTEGER,
+                bookshelf_id INTEGER,
+                PRIMARY KEY (book_id, bookshelf_id),
+                FOREIGN KEY (book_id) REFERENCES books (book_id),
+                FOREIGN KEY (bookshelf_id) REFERENCES bookshelves (bookshelf_id)
+            );
+            
+            -- Create genres table
+            CREATE TABLE IF NOT EXISTS genres (
+                genre_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                parent_genre_id INTEGER,
+                UNIQUE(name),
+                FOREIGN KEY (parent_genre_id) REFERENCES genres (genre_id)
+            );
+            
+            -- Create book_genres table (many-to-many)
+            CREATE TABLE IF NOT EXISTS book_genres (
+                book_id INTEGER,
+                genre_id INTEGER,
+                confidence REAL DEFAULT 1.0,  -- How confident we are in this genre classification (0.0-1.0)
+                source TEXT,  -- Where this genre classification came from (e.g., 'api', 'bookshelf', 'subject')
+                PRIMARY KEY (book_id, genre_id),
+                FOREIGN KEY (book_id) REFERENCES books (book_id),
+                FOREIGN KEY (genre_id) REFERENCES genres (genre_id)
+            );
+            
+            -- Add metadata_version field to books table
+            ALTER TABLE books ADD COLUMN metadata_version INTEGER DEFAULT 1;
+            
+            -- Add full_metadata field to books table (to hold complete JSON from various sources)
+            ALTER TABLE books ADD COLUMN full_metadata JSON;
+            
+            -- Create indexes
+            CREATE INDEX IF NOT EXISTS idx_book_bookshelves_book_id ON book_bookshelves(book_id);
+            CREATE INDEX IF NOT EXISTS idx_book_bookshelves_bookshelf_id ON book_bookshelves(bookshelf_id);
+            CREATE INDEX IF NOT EXISTS idx_book_genres_book_id ON book_genres(book_id);
+            CREATE INDEX IF NOT EXISTS idx_book_genres_genre_id ON book_genres(genre_id);
+            CREATE INDEX IF NOT EXISTS idx_book_genres_confidence ON book_genres(confidence);
+            
+            -- Create FTS5 index for searching genres
+            CREATE VIRTUAL TABLE IF NOT EXISTS genres_fts USING fts5(
+                genre_id,
+                name,
+                content='genres',
+                content_rowid='genre_id'
+            );
+            
+            -- Add trigger to keep genres_fts in sync
+            CREATE TRIGGER IF NOT EXISTS genres_fts_insert AFTER INSERT ON genres BEGIN
+                INSERT INTO genres_fts(genre_id, name) VALUES (new.genre_id, new.name);
+            END;
+            
+            CREATE TRIGGER IF NOT EXISTS genres_fts_update AFTER UPDATE ON genres BEGIN
+                UPDATE genres_fts SET name = new.name WHERE genre_id = new.genre_id;
+            END;
+            
+            CREATE TRIGGER IF NOT EXISTS genres_fts_delete AFTER DELETE ON genres BEGIN
+                DELETE FROM genres_fts WHERE genre_id = old.genre_id;
+            END;
+            
+            -- Add support for bookshelves to FTS
+            DROP TABLE IF EXISTS books_fts;
+            CREATE VIRTUAL TABLE IF NOT EXISTS books_fts USING fts5(
+                book_id,
+                title,
+                author,
+                subjects,
+                bookshelves,
+                genres,
+                content='books',
+                content_rowid='book_id'
+            );
+        """),
+        downgrade_func=lambda conn: conn.executescript("""
+            -- Drop FTS tables first
+            DROP TABLE IF EXISTS genres_fts;
+            DROP TABLE IF EXISTS books_fts;
+            CREATE VIRTUAL TABLE IF NOT EXISTS books_fts USING fts5(
+                book_id,
+                title,
+                author,
+                subjects,
+                content='books',
+                content_rowid='book_id'
+            );
+            
+            -- Drop triggers
+            DROP TRIGGER IF EXISTS genres_fts_insert;
+            DROP TRIGGER IF EXISTS genres_fts_update;
+            DROP TRIGGER IF EXISTS genres_fts_delete;
+            
+            -- Drop tables
+            DROP TABLE IF EXISTS book_genres;
+            DROP TABLE IF EXISTS genres;
+            DROP TABLE IF EXISTS book_bookshelves;
+            DROP TABLE IF EXISTS bookshelves;
+            
+            -- Remove columns from books table
+            CREATE TABLE books_backup (
+                book_id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                language TEXT,
+                download_count INTEGER,
+                copyright_status BOOLEAN,
+                media_type TEXT,
+                metadata JSON,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(book_id)
+            );
+            
+            INSERT INTO books_backup SELECT 
+                book_id, title, language, download_count, copyright_status, 
+                media_type, metadata, last_updated
+            FROM books;
+            
+            DROP TABLE books;
+            ALTER TABLE books_backup RENAME TO books;
+            
+            -- Recreate indexes
+            CREATE INDEX IF NOT EXISTS idx_books_language ON books(language);
+            CREATE INDEX IF NOT EXISTS idx_books_download_count ON books(download_count);
+        """)
     )
 ]
 

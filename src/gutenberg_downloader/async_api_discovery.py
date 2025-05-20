@@ -36,6 +36,21 @@ class AsyncAPIBookDiscovery:
         """Exit async context manager."""
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb)
         await self.downloader.__aexit__(exc_type, exc_val, exc_tb)
+        
+    def __enter__(self):
+        """Enter regular context manager - creates an event loop to call async methods."""
+        loop = asyncio.get_event_loop()
+        # Initialize the async client and downloader
+        loop.run_until_complete(self.api_client.__aenter__())
+        loop.run_until_complete(self.downloader.__aenter__())
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit regular context manager - clean up async resources."""
+        loop = asyncio.get_event_loop()
+        # Clean up async resources
+        loop.run_until_complete(self.api_client.__aexit__(exc_type, exc_val, exc_tb))
+        loop.run_until_complete(self.downloader.__aexit__(exc_type, exc_val, exc_tb))
     
     def _format_book_data(self, api_book: dict[str, Any]) -> dict[str, Any]:
         """Format API book data to match our internal structure.
@@ -199,6 +214,42 @@ class AsyncAPIBookDiscovery:
         except Exception as e:
             logger.error(f"Error getting book {book_id}: {e}")
             return None
+            
+    def get_book_by_id(self, book_id: int) -> Optional[dict[str, Any]]:
+        """Get book details by Project Gutenberg ID (synchronous wrapper).
+        
+        Args:
+            book_id: Project Gutenberg book ID
+            
+        Returns:
+            Book details or None if not found
+        """
+        try:
+            logger.info(f"Getting book details for ID: {book_id} (sync wrapper)")
+            
+            # Create a new event loop if there isn't one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            return loop.run_until_complete(self.get_book_by_id_async(book_id))
+            
+        except Exception as e:
+            logger.error(f"Error getting book {book_id}: {e}")
+            return None
+            
+    def get_book_details(self, book_id: int) -> Optional[dict[str, Any]]:
+        """Get book details by Project Gutenberg ID (alias for get_book_by_id).
+        
+        Args:
+            book_id: Project Gutenberg book ID
+            
+        Returns:
+            Book details or None if not found
+        """
+        return self.get_book_by_id(book_id)
     
     async def _download_single_book(
         self,
@@ -207,6 +258,7 @@ class AsyncAPIBookDiscovery:
         book_details: Optional[dict[str, Any]] = None,
         progress_bar: bool = True,
         skip_existing: bool = True,
+        resume: bool = True,
     ) -> bool:
         """Download a single book asynchronously.
         
@@ -216,6 +268,7 @@ class AsyncAPIBookDiscovery:
             book_details: Optional pre-fetched book details
             progress_bar: Whether to show progress bar
             skip_existing: Whether to skip existing files
+            resume: Whether to enable resume capability for interrupted downloads
             
         Returns:
             True if successful, False otherwise
@@ -253,6 +306,8 @@ class AsyncAPIBookDiscovery:
                     epub_url,
                     output_path,
                     progress_bar=progress_bar,
+                    resume=resume,
+                    book_id=book_id  # Pass book_id for mirror selection
                 )
                 
         except Exception as e:
@@ -266,6 +321,7 @@ class AsyncAPIBookDiscovery:
         progress_bar: bool = True,
         skip_existing: bool = True,
         stop_on_error: bool = False,
+        resume: bool = True,
     ) -> dict[int, bool]:
         """Download multiple books concurrently.
         
@@ -275,6 +331,7 @@ class AsyncAPIBookDiscovery:
             progress_bar: Whether to show progress bars
             skip_existing: Whether to skip existing files
             stop_on_error: Whether to stop on first error
+            resume: Whether to enable resume capability for interrupted downloads
             
         Returns:
             Dictionary mapping book ID to download success
@@ -289,6 +346,7 @@ class AsyncAPIBookDiscovery:
                 output_dir,
                 progress_bar=progress_bar,
                 skip_existing=skip_existing,
+                resume=resume,
             )
             tasks.append(task)
         
@@ -314,3 +372,51 @@ class AsyncAPIBookDiscovery:
         logger.info(f"Downloaded {successful}/{len(book_ids)} books successfully")
         
         return download_results
+        
+    async def download_book_epub_async(
+        self,
+        book_id: int,
+        output_path: Path,
+        book_details: Optional[dict[str, Any]] = None,
+        progress_bar: bool = True,
+        resume: bool = True
+    ) -> bool:
+        """Download a book EPUB by ID asynchronously.
+        
+        Args:
+            book_id: Book ID to download
+            output_path: Output file path
+            book_details: Optional pre-fetched book details
+            progress_bar: Whether to show progress bar
+            resume: Whether to enable resume capability
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Get book details if not provided
+            if not book_details:
+                book_details = await self.get_book_by_id_async(book_id)
+            
+            if not book_details:
+                logger.error(f"Book {book_id} not found")
+                return False
+            
+            # Get EPUB URL
+            epub_url = book_details.get("download_links", {}).get("epub")
+            if not epub_url:
+                logger.error(f"No EPUB URL found for book {book_id}")
+                return False
+            
+            # Download the EPUB
+            return await self.downloader.download_epub(
+                epub_url,
+                output_path,
+                progress_bar=progress_bar,
+                resume=resume,
+                book_id=book_id  # Pass book_id for mirror selection
+            )
+            
+        except Exception as e:
+            logger.error(f"Error downloading book {book_id}: {e}")
+            return False

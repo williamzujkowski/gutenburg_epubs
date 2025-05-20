@@ -137,7 +137,8 @@ class SmartDownloader:
         self, 
         url: str, 
         output_path: Path, 
-        book_id: Optional[int] = None
+        book_id: Optional[int] = None,
+        enable_resume: bool = True
     ) -> bool:
         """Download a file with resume capability.
         
@@ -145,6 +146,7 @@ class SmartDownloader:
             url: URL to download
             output_path: Path to save the file
             book_id: Optional book ID for state tracking
+            enable_resume: Whether to enable resume capability for interrupted downloads
             
         Returns:
             True if successful, False otherwise
@@ -156,10 +158,14 @@ class SmartDownloader:
         retries = 0
         resume_pos = 0
         
-        if output_path.exists():
+        if enable_resume and output_path.exists():
             resume_pos = output_path.stat().st_size
             if resume_pos > 0:
-                logger.info(f"Found existing file {output_path.name} with {resume_pos} bytes. Attempting to resume.")
+                logger.info(f"Found existing file {output_path.name} with {resume_pos} bytes. Attempting to resume from that position.")
+        elif output_path.exists():
+            # Delete existing file when resume is disabled but file exists
+            output_path.unlink()
+            logger.info(f"Deleting existing file {output_path.name} as resume is disabled.")
         
         # Use mirror sites if enabled and book_id is provided
         mirror_url = None
@@ -173,21 +179,21 @@ class SmartDownloader:
             try:
                 # Setup headers for resume
                 headers = {}
-                if resume_pos > 0:
+                if enable_resume and resume_pos > 0:
                     headers['Range'] = f'bytes={resume_pos}-'
                 
                 # Make request using stream context manager
                 with self.client.stream("GET", url, headers=headers) as response:
-                    # Check if server supports resume
-                    if resume_pos > 0 and response.status_code != 206:
+                    # Check if server supports resume when needed
+                    if enable_resume and resume_pos > 0 and response.status_code != 206:
                         logger.warning("Server doesn't support resume, starting from beginning")
                         resume_pos = 0
                         response.close()
                         with self.client.stream("GET", url) as response:
                             return self._process_download_response(
-                                response, book_id, output_path, resume_pos)
+                                response, book_id, output_path, resume_pos, enable_resume)
                     
-                    return self._process_download_response(response, book_id, output_path, resume_pos)
+                    return self._process_download_response(response, book_id, output_path, resume_pos, enable_resume)
             
             except Exception as e:
                 retries += 1
@@ -219,7 +225,7 @@ class SmartDownloader:
         
         return False
     
-    def _process_download_response(self, response, book_id, output_path, resume_pos):
+    def _process_download_response(self, response, book_id, output_path, resume_pos, enable_resume=True):
         """Process download response and save the file.
         
         Args:
@@ -227,12 +233,52 @@ class SmartDownloader:
             book_id: Book ID or None
             output_path: Output file path
             resume_pos: Position to resume from
+            enable_resume: Whether resume capability is enabled
             
         Returns:
             True if successful, False otherwise
+            
+        Notes:
+            This method handles 404 errors specially, attempting to retry with different mirrors
+            when a 404 Not Found error is encountered. This way, if one mirror doesn't have a
+            specific book, the system will automatically try other mirrors until it finds one
+            that does have the book.
         """
         try:
-            # Raise for status
+            # Check for 404 status - special handling for this error
+            if response.status_code == 404:
+                logger.warning(f"Received 404 Not Found for URL: {response.url}")
+                
+                # If we're using mirrors and have a book_id, try another mirror instead of failing
+                if self.mirrors_enabled and self.mirror_manager and book_id:
+                    # Report failure to mirror manager
+                    current_url = str(response.url)
+                    hostname = response.url.host
+                    base_url = f"{response.url.scheme}://{hostname}"
+                    self.mirror_manager.report_failure(base_url)
+                    
+                    # Get a new URL from a different mirror
+                    logger.info(f"Attempting to find an alternate mirror for book {book_id} after 404 error")
+                    
+                    # Explicitly exclude the current mirror that returned a 404
+                    self.mirror_manager.recently_used.append(base_url)
+                    
+                    # Get a fresh URL from a different mirror
+                    new_mirror_url = self.mirror_manager.select_mirror(book_id)
+                    new_book_url = self.mirror_manager.build_book_url(book_id, new_mirror_url)
+                    
+                    # Only retry if we got a different URL
+                    if new_book_url != current_url:
+                        logger.info(f"Retrying with alternative mirror: {new_book_url}")
+                        # Recursively call download with the new URL
+                        return self.download_with_resume(new_book_url, output_path, book_id, enable_resume)
+                    else:
+                        logger.warning("No alternative mirrors available, or all mirrors returned 404")
+                
+                # If we can't retry with a different mirror, then fail
+                return False
+            
+            # For other status codes, raise for status as before
             response.raise_for_status()
             
             # Get total size
@@ -240,8 +286,8 @@ class SmartDownloader:
             if resume_pos > 0:
                 total_size += resume_pos
             
-            # Download with progress
-            mode = 'ab' if resume_pos > 0 else 'wb'
+            # Download with progress - use append mode for resume, write mode otherwise
+            mode = 'ab' if enable_resume and resume_pos > 0 else 'wb'
             with open(output_path, mode) as f:
                 with tqdm(
                     total=total_size,
@@ -285,6 +331,35 @@ class SmartDownloader:
             
         except Exception as e:
             logger.error(f"Error processing download: {e}")
+            
+            # Special handling for other HTTP errors if using mirrors
+            if isinstance(e, httpx.HTTPStatusError) and self.mirrors_enabled and self.mirror_manager and book_id:
+                status_code = e.response.status_code
+                logger.warning(f"HTTP error {status_code} for URL: {e.response.url}")
+                
+                # Report failure to mirror manager
+                hostname = e.response.url.host
+                base_url = f"{e.response.url.scheme}://{hostname}"
+                self.mirror_manager.report_failure(base_url)
+                
+                # For client errors (4xx), try another mirror
+                if 400 <= status_code < 500:
+                    logger.info(f"Attempting to find an alternate mirror for book {book_id} after {status_code} error")
+                    
+                    # Explicitly exclude the current mirror
+                    current_url = str(e.response.url)
+                    self.mirror_manager.recently_used.append(base_url)
+                    
+                    # Get a fresh URL from a different mirror
+                    new_mirror_url = self.mirror_manager.select_mirror(book_id)
+                    new_book_url = self.mirror_manager.build_book_url(book_id, new_mirror_url)
+                    
+                    # Only retry if we got a different URL
+                    if new_book_url != current_url:
+                        logger.info(f"Retrying with alternative mirror: {new_book_url}")
+                        # Recursively call download with the new URL
+                        return self.download_with_resume(new_book_url, output_path, book_id, enable_resume)
+            
             return False
     
     def download_book(
@@ -292,7 +367,8 @@ class SmartDownloader:
         book_id: int,
         epub_url: str,
         output_dir: Path,
-        filename: Optional[str] = None
+        filename: Optional[str] = None,
+        resume: bool = True
     ) -> bool:
         """Download a book with smart resume.
         
@@ -301,6 +377,7 @@ class SmartDownloader:
             epub_url: URL to EPUB file
             output_dir: Output directory
             filename: Optional custom filename
+            resume: Whether to enable resume capability for interrupted downloads
             
         Returns:
             True if successful, False otherwise
@@ -326,8 +403,8 @@ class SmartDownloader:
             logger.info(f"Book {book_id} already downloaded to {output_path}")
             return True
         
-        # Download with resume
-        return self.download_with_resume(epub_url, output_path, book_id)
+        # Download with resume if enabled
+        return self.download_with_resume(epub_url, output_path, book_id, enable_resume=resume)
     
     def get_pending_downloads(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get list of pending downloads.

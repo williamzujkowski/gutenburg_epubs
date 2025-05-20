@@ -270,7 +270,9 @@ class EnhancedDownloader(SmartDownloader):
         output_dir: Path = Path("downloads"),
         limit: int = 10,
         match_any_term: bool = False,
-        skip_existing: bool = True
+        skip_existing: bool = True,
+        resume: bool = True,
+        force_download: bool = False
     ) -> Tuple[int, int]:
         """Search for books using multiple filters and download them.
         
@@ -284,6 +286,8 @@ class EnhancedDownloader(SmartDownloader):
             match_any_term: If True, match books that have any of the search terms
                            If False, require all search terms to match (default)
             skip_existing: Skip books that already exist in the output directory
+            resume: Enable resume capability for interrupted downloads
+            force_download: Force download even if files already exist (useful for testing mirror fallback)
             
         Returns:
             Tuple of (successfully downloaded count, failed count)
@@ -334,10 +338,15 @@ class EnhancedDownloader(SmartDownloader):
             output_path = output_dir / filename
             
             # Check for existing file
-            if skip_existing and output_path.exists():
+            if skip_existing and output_path.exists() and not force_download:
                 logger.info(f"Skipping {book_id}: {title} (already exists)")
                 success_count += 1  # Count as success since it exists
                 continue
+            
+            # If force_download is enabled, remove the existing file to force a fresh download
+            if force_download and output_path.exists():
+                logger.info(f"Force download enabled. Removing existing file: {output_path}")
+                output_path.unlink()
             
             # Find EPUB URL from book data
             epub_url = None
@@ -395,7 +404,8 @@ class EnhancedDownloader(SmartDownloader):
                 book_id,
                 epub_url, 
                 output_dir,
-                filename=filename
+                filename=filename,
+                resume=resume
             )
             
             if success:

@@ -36,7 +36,7 @@ REQUEST_TIMEOUT = 30.0  # General request timeout
 
 # Async configuration
 DEFAULT_CONCURRENT_DOWNLOADS = 5
-MAX_CONCURRENT_DOWNLOADS = 10
+MAX_CONCURRENT_DOWNLOADS = 15
 
 # Project Gutenberg specific paths
 ROBOTS_TXT_PATH = "/robots.txt"

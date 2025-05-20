@@ -33,6 +33,7 @@ class AsyncEpubDownloader:
         max_retries: int = MAX_DOWNLOAD_RETRIES,
         timeout: float = REQUEST_TIMEOUT,
         max_concurrency: int = 5,
+        mirrors_enabled: bool = False
     ):
         """Initialize the async EPUB downloader.
 
@@ -41,11 +42,19 @@ class AsyncEpubDownloader:
             max_retries: Maximum number of download retry attempts.
             timeout: Request timeout in seconds.
             max_concurrency: Maximum number of concurrent downloads.
+            mirrors_enabled: Whether to use mirror site rotation.
         """
         self.user_agent = user_agent
         self.max_retries = max_retries
         self.timeout = timeout
         self.max_concurrency = max_concurrency
+        self.mirrors_enabled = mirrors_enabled
+        
+        # Initialize mirror manager if enabled
+        self.mirror_manager = None
+        if mirrors_enabled:
+            from .mirror_manager import MirrorManager
+            self.mirror_manager = MirrorManager(user_agent=user_agent, timeout=timeout)
 
         # Create client with custom headers
         self.client = httpx.AsyncClient(
@@ -64,10 +73,27 @@ class AsyncEpubDownloader:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit async context manager and clean up resources."""
         await self.close()
+        
+    def __enter__(self) -> "AsyncEpubDownloader":
+        """Enter context manager - for synchronous use."""
+        return self
+        
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit context manager and clean up resources."""
+        # Run close in an event loop
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self.close())
+        finally:
+            loop.close()
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client and other resources."""
         await self.client.aclose()
+        
+        # Close mirror manager if it exists
+        if self.mirror_manager:
+            self.mirror_manager.close()
 
     async def download_epub(
         self,
@@ -76,6 +102,8 @@ class AsyncEpubDownloader:
         progress_bar: bool = True,
         verify_size: bool = True,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        book_id: Optional[int] = None,  # Add book_id parameter for mirror support
+        resume: bool = True
     ) -> bool:
         """Download a single EPUB file asynchronously.
 
@@ -85,10 +113,23 @@ class AsyncEpubDownloader:
             progress_bar: Whether to show a progress bar during download.
             verify_size: Whether to verify file size after download.
             progress_callback: Optional callback for custom progress reporting.
+            book_id: Book ID for mirror site support (optional).
+            resume: Whether to enable resume capability for interrupted downloads.
 
         Returns:
             True if download was successful, False otherwise.
         """
+        # Use mirror site if enabled and book_id is provided
+        if self.mirrors_enabled and self.mirror_manager and book_id:
+            try:
+                # Get mirror URL for the book
+                mirror_url = self.mirror_manager.get_book_url(book_id)
+                logger.info(f"Using mirror for book {book_id}: {mirror_url}")
+                url = mirror_url
+            except Exception as e:
+                logger.error(f"Error getting mirror URL for book {book_id}: {e}")
+                # Continue with the original URL as fallback
+                logger.info(f"Falling back to original URL: {url}")
         async with self._semaphore:  # Control concurrency
             try:
                 output_path = Path(output_path)
@@ -229,7 +270,7 @@ class AsyncEpubDownloader:
 
     async def download_multiple_epubs(
         self,
-        downloads: list[tuple[str, Union[str, Path]]],
+        downloads: list[tuple[str, Union[str, Path], Optional[int]]],
         progress_bar: bool = True,
         stop_on_error: bool = False,
         overall_progress_callback: Optional[Callable[[int, int], None]] = None,
@@ -237,7 +278,7 @@ class AsyncEpubDownloader:
         """Download multiple EPUB files concurrently.
 
         Args:
-            downloads: List of (url, output_path) tuples.
+            downloads: List of (url, output_path, book_id) tuples. book_id can be None.
             progress_bar: Whether to show progress bars.
             stop_on_error: Whether to stop all downloads if one fails.
             overall_progress_callback: Callback for overall progress.
@@ -258,7 +299,14 @@ class AsyncEpubDownloader:
 
         # Create tasks for concurrent downloads
         tasks = []
-        for i, (url, output_path) in enumerate(downloads):
+        for i, download_tuple in enumerate(downloads):
+            # Unpack tuple with support for optional book_id
+            if len(download_tuple) == 2:
+                url, output_path = download_tuple
+                book_id = None
+            else:
+                url, output_path, book_id = download_tuple
+                
             task = self._download_with_progress(
                 url,
                 output_path,
@@ -267,6 +315,7 @@ class AsyncEpubDownloader:
                 total_tasks=len(downloads),
                 overall_pbar=overall_pbar,
                 overall_progress_callback=overall_progress_callback,
+                book_id=book_id,
             )
             tasks.append(task)
 
@@ -275,18 +324,21 @@ class AsyncEpubDownloader:
             # Use gather with return_exceptions=False to stop on first error
             try:
                 download_results = await asyncio.gather(*tasks, return_exceptions=False)
-                for (url, _), success in zip(downloads, download_results):
+                for download_tuple, success in zip(downloads, download_results):
+                    url = download_tuple[0]  # First element is always the URL
                     results[url] = success
             except Exception as e:
                 logger.error(f"Error during concurrent downloads: {e}")
                 # Mark remaining downloads as failed
-                for url, _ in downloads:
+                for download_tuple in downloads:
+                    url = download_tuple[0]  # First element is always the URL
                     if url not in results:
                         results[url] = False
         else:
             # Continue on errors
             download_results_with_errors: list[Union[bool, BaseException]] = await asyncio.gather(*tasks, return_exceptions=True)
-            for (url, _), result in zip(downloads, download_results_with_errors):
+            for download_tuple, result in zip(downloads, download_results_with_errors):
+                url = download_tuple[0]  # First element is always the URL
                 if isinstance(result, Exception):
                     logger.error(f"Error downloading {url}: {result}")
                     results[url] = False
@@ -311,6 +363,7 @@ class AsyncEpubDownloader:
         total_tasks: int,
         overall_pbar: Optional[tqdm] = None,
         overall_progress_callback: Optional[Callable[[int, int], None]] = None,
+        book_id: Optional[int] = None,
     ) -> bool:
         """Download a single file with progress tracking.
 
@@ -322,6 +375,7 @@ class AsyncEpubDownloader:
             total_tasks: Total number of tasks in the batch.
             overall_pbar: Overall progress bar instance.
             overall_progress_callback: Callback for overall progress.
+            book_id: Optional book ID for mirror support.
 
         Returns:
             True if successful, False otherwise.
@@ -331,6 +385,8 @@ class AsyncEpubDownloader:
             output_path,
             progress_bar=progress_bar,
             verify_size=True,
+            book_id=book_id,
+            resume=True,
         )
 
         # Update overall progress
@@ -362,6 +418,8 @@ class AsyncEpubDownloader:
             logger.warning(f"Download directory {download_dir} doesn't exist or is not a directory")
             return incomplete_files
             
+        # This part isn't truly async but we're keeping the async signature for consistency
+        # and potential future improvements with aiofiles
         for file_path in download_dir.glob("*.epub"):
             try:
                 # Check if file exists and is suspiciously small (likely incomplete)

@@ -11,7 +11,9 @@ The Gutenberg EPUB Downloader includes a comprehensive database solution to effi
 A SQLite-based database system that stores:
 - **Books table**: Core book metadata (title, language, download count)
 - **Authors table**: Author information with many-to-many relationships
-- **Subjects table**: Book categories/genres
+- **Subjects table**: Book categories from Project Gutenberg
+- **Bookshelves table**: Project Gutenberg bookshelf categories
+- **Genres table**: Standardized genre classifications derived from subjects and bookshelves
 - **Formats table**: Available download formats for each book  
 - **Downloads table**: Track downloaded books and file locations
 - **Mirrors table**: Information about mirror sites
@@ -73,11 +75,13 @@ Enhanced database commands:
 - `gutenberg-downloader mirrors update`: Update mirror list from Project Gutenberg
 
 Enhanced existing commands:
-- `--use-db` flag for all commands to use database
+- Database usage enabled by default (use `--no-db` to disable)
 - `--db-path` to specify custom database location
-- `--use-mirrors` flag to enable mirror site rotation
+- Mirror rotation enabled by default (use `--no-mirrors` to disable)
 - `--preferred-mirrors` to specify preferred mirror sites
 - Database-aware search and discovery
+- Asynchronous mode enabled by default (use `--sync-mode` to use synchronous mode)
+- Resume capability enabled by default (use `--no-resume` to disable)
 
 ## Usage Examples
 
@@ -93,19 +97,22 @@ gutenberg-downloader db stats
 gutenberg-downloader mirrors update
 ```
 
-### Using Database and Mirrors for Operations
+### Operations with Optimized Defaults
 ```bash
-# Discover books using database (faster)
-gutenberg-downloader discover --use-db --limit 20
+# Discover books (database and mirrors enabled by default)
+gutenberg-downloader discover --limit 20
 
-# Search with database
-gutenberg-downloader search --use-db --author "Jane Austen"
+# Search for books (database enabled by default)
+gutenberg-downloader search --author "Jane Austen"
 
-# Download using mirror rotation
-gutenberg-downloader download 1342 --use-mirrors
+# Download a book (mirrors and resume enabled by default)
+gutenberg-downloader download 1342 --output ./books/
 
-# Download popular books with database and mirrors
-gutenberg-downloader download-popular --use-db --use-mirrors --limit 10
+# Download popular books (all optimizations enabled by default)
+gutenberg-downloader download-popular --limit 10 --output ./books/
+
+# Disable optimizations if needed
+gutenberg-downloader --no-db --no-mirrors download-popular --sync-mode --limit 10
 ```
 
 ## Performance Benefits
@@ -123,23 +130,26 @@ gutenberg-downloader download-popular --use-db --use-mirrors --limit 10
 ```sql
 -- Books table with core metadata
 CREATE TABLE books (
-    id INTEGER PRIMARY KEY,
+    book_id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
-    author TEXT,
     language TEXT,
-    download_count INTEGER DEFAULT 0,
-    has_epub BOOLEAN DEFAULT 0,
-    epub_url TEXT,
-    publication_date TEXT,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    download_count INTEGER,
+    copyright_status BOOLEAN,
+    media_type TEXT,
+    metadata JSON,
+    full_metadata JSON,
+    metadata_version INTEGER DEFAULT 1,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id)
 );
 
 -- Authors with many-to-many relationships
 CREATE TABLE authors (
-    id INTEGER PRIMARY KEY,
+    author_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     birth_year INTEGER,
-    death_year INTEGER
+    death_year INTEGER,
+    UNIQUE(name)
 );
 
 -- Book-Author relationships
@@ -147,14 +157,15 @@ CREATE TABLE book_authors (
     book_id INTEGER,
     author_id INTEGER,
     PRIMARY KEY (book_id, author_id),
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (author_id) REFERENCES authors(author_id)
 );
 
 -- Subjects table
 CREATE TABLE subjects (
-    id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL
+    subject_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    UNIQUE(name)
 );
 
 -- Book-Subject relationships
@@ -162,38 +173,95 @@ CREATE TABLE book_subjects (
     book_id INTEGER,
     subject_id INTEGER,
     PRIMARY KEY (book_id, subject_id),
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (subject_id) REFERENCES subjects(subject_id)
 );
 
--- Full-text search table
-CREATE VIRTUAL TABLE book_content USING fts5(
-    book_id UNINDEXED,
-    title,
-    author,
-    subject,
-    content,
-    tokenize = 'porter unicode61'
+-- Bookshelves table (Project Gutenberg categorizations)
+CREATE TABLE bookshelves (
+    bookshelf_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    UNIQUE(name)
+);
+
+-- Book-Bookshelf relationships
+CREATE TABLE book_bookshelves (
+    book_id INTEGER,
+    bookshelf_id INTEGER,
+    PRIMARY KEY (book_id, bookshelf_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (bookshelf_id) REFERENCES bookshelves(bookshelf_id)
+);
+
+-- Genres table (standardized classifications)
+CREATE TABLE genres (
+    genre_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    parent_genre_id INTEGER,
+    UNIQUE(name),
+    FOREIGN KEY (parent_genre_id) REFERENCES genres(genre_id)
+);
+
+-- Book-Genre relationships
+CREATE TABLE book_genres (
+    book_id INTEGER,
+    genre_id INTEGER,
+    confidence REAL DEFAULT 1.0,  -- How confident we are in this genre classification (0.0-1.0)
+    source TEXT,  -- Where this genre classification came from (e.g., 'api', 'bookshelf', 'subject')
+    PRIMARY KEY (book_id, genre_id),
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    FOREIGN KEY (genre_id) REFERENCES genres(genre_id)
+);
+
+-- Formats table (available download formats)
+CREATE TABLE formats (
+    format_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER,
+    format_type TEXT NOT NULL,
+    url TEXT NOT NULL,
+    mime_type TEXT,
+    FOREIGN KEY (book_id) REFERENCES books(book_id)
 );
 
 -- Downloads tracking
 CREATE TABLE downloads (
-    id INTEGER PRIMARY KEY,
+    download_id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL,
-    output_path TEXT NOT NULL,
-    status TEXT CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')) DEFAULT 'pending',
-    file_size INTEGER DEFAULT 0,
-    attempt_count INTEGER DEFAULT 0,
-    mirror_url TEXT,
-    download_start TIMESTAMP,
-    download_end TIMESTAMP,
-    last_error TEXT,
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    download_path TEXT NOT NULL,
+    download_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    bytes_downloaded INTEGER DEFAULT 0,
+    total_bytes INTEGER DEFAULT 0,
+    status TEXT CHECK(status IN ('pending', 'downloading', 'completed', 'failed')),
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    FOREIGN KEY (book_id) REFERENCES books(book_id),
+    UNIQUE(book_id, download_path)
+);
+
+-- Full-text search for books
+CREATE VIRTUAL TABLE books_fts USING fts5(
+    book_id,
+    title,
+    author,
+    subjects,
+    bookshelves,
+    genres,
+    content='books',
+    content_rowid='book_id'
+);
+
+-- Full-text search for genres
+CREATE VIRTUAL TABLE genres_fts USING fts5(
+    genre_id,
+    name,
+    content='genres',
+    content_rowid='genre_id'
 );
 
 -- Mirror sites
 CREATE TABLE mirrors (
-    id INTEGER PRIMARY KEY,
+    mirror_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     base_url TEXT UNIQUE NOT NULL,
     country TEXT,
@@ -212,8 +280,43 @@ CREATE TABLE mirror_book_availability (
     book_id INTEGER,
     verified_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (mirror_id, book_id),
-    FOREIGN KEY (mirror_id) REFERENCES mirrors(id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    FOREIGN KEY (mirror_id) REFERENCES mirrors(mirror_id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+);
+
+-- Download statistics
+CREATE TABLE download_stats (
+    stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER,
+    download_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    download_duration_ms INTEGER,
+    file_size_bytes INTEGER,
+    success BOOLEAN,
+    error_message TEXT,
+    source TEXT,
+    FOREIGN KEY (book_id) REFERENCES books(book_id)
+);
+
+-- Session statistics
+CREATE TABLE session_stats (
+    session_id TEXT PRIMARY KEY,
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    total_downloads INTEGER DEFAULT 0,
+    successful_downloads INTEGER DEFAULT 0,
+    failed_downloads INTEGER DEFAULT 0,
+    total_bytes_downloaded INTEGER DEFAULT 0,
+    avg_download_speed_bps REAL
+);
+
+-- Cache table
+CREATE TABLE cache (
+    cache_key TEXT PRIMARY KEY,
+    data BLOB,
+    content_type TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    metadata TEXT
 );
 ```
 
@@ -234,6 +337,11 @@ The database plays a crucial role in the mirror site selection algorithm:
    - Recent usage (to avoid overloading a single mirror)
    - User preferences (preferred mirrors and countries)
 5. **Failure Handling**: If a download fails, the mirror's health score is decreased and another mirror is tried
+6. **404 Error Smart Handling**: When a mirror returns a 404 Not Found error:
+   - The system automatically marks the mirror as not having that book
+   - It immediately tries alternative mirrors until the book is found
+   - This handling is transparent to the user - no configuration needed
+   - Mirrors that consistently return 404s have reduced health scores
 
 The algorithm ensures optimal download performance while respecting server resources and user preferences.
 
@@ -241,10 +349,49 @@ The algorithm ensures optimal download performance while respecting server resou
 
 1. **Initial Setup**: Run `db refresh` to populate the database
 2. **Regular Updates**: Periodically refresh to get new books
-3. **Use Database Flag**: Add `--use-db` for better performance
-4. **Enable Mirrors**: Add `--use-mirrors` for faster, more reliable downloads
-5. **Monitor Size**: Database file grows with more books
-6. **Backup**: Regularly backup `gutenberg_books.db`
+3. **Use Default Optimizations**: Enjoy the optimized defaults (database, mirrors, async, resume)
+4. **Keep Mirrors Enabled**: Leave mirror support enabled to benefit from the 404 error fallback mechanism
+5. **Tune Concurrency**: Adjust `--concurrency` value for faster parallel downloads
+6. **Monitor Size**: Database file grows with more books
+7. **Backup**: Regularly backup `gutenberg_books.db`
+8. **Sync Mode**: Use `--sync-mode` for low-resource environments
+
+## Metadata and Genre System
+
+The enhanced database schema includes comprehensive support for book metadata and genre classification:
+
+1. **Multi-source Metadata**: Combines data from multiple sources:
+   - Gutendex API (primary source)
+   - Project Gutenberg CSV catalog
+   - Project Gutenberg RDF catalog
+
+2. **Standardized Genre Classification**: The system automatically extracts and standardizes genres:
+   - Analyzes subjects from Project Gutenberg
+   - Analyzes bookshelves categorizations
+   - Maps both to standardized genre classifications
+   - Uses a confidence scoring system for genre assignments
+   - Tracks the source of each genre classification
+
+3. **Rich Metadata Storage**:
+   - Full book metadata including publication details, copyright information
+   - Complete author information with birth/death years
+   - Library of Congress Classification (LCC) support
+   - Comprehensive subject and bookshelf relationships
+   - Full-text search across all metadata fields
+
+4. **Metadata Refresh Capabilities**:
+   - Update outdated book information
+   - Enhance existing records with more complete data
+   - Synchronize data across multiple sources
+   - Retain full provenance of information sources
+   - Support for metadata versioning
+
+5. **Powerful Genre-Based Discovery**:
+   - Search by standardized genre
+   - Filter by subject and bookshelf
+   - Combine genre filters with other search criteria
+   - Full-text search within specific genres
+   - Cross-referenced genre relationships
 
 ## Future Enhancements
 
@@ -254,5 +401,9 @@ The algorithm ensures optimal download performance while respecting server resou
 4. **Bandwidth Tracking**: Track bandwidth usage per mirror
 5. **Mirror Testing**: Periodic health checks for mirrors
 6. **Custom Mirror Plugins**: Allow users to add custom mirror handlers
+7. **Genre Hierarchy**: Implement hierarchical genre relationships (parent/child)
+8. **Machine Learning Classification**: Use ML to improve genre classification
+9. **Automated Metadata Enhancement**: Proactively fill missing metadata
+10. **Cross-referencing**: Link related books based on subjects and genres
 
-This database implementation provides a robust foundation for efficiently managing large book catalogs while ensuring optimal download performance through intelligent mirror site selection.
+This database implementation provides a robust foundation for efficiently managing large book catalogs with rich metadata, powerful genre classification, and optimal download performance through intelligent mirror site selection.

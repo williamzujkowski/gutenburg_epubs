@@ -8,7 +8,7 @@ aiofiles>=23.1
 uvloop>=0.17;platform_system!='Windows'
 pandas>=2.0
 openpyxl>=3.1
-textual>=0.40
+textual>=3.0.0
 rich>=13.0
 toml>=0.10
 pyyaml>=6.0

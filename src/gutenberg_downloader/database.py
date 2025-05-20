@@ -224,37 +224,74 @@ class BookDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Insert or update main book record
-                cursor.execute("""
-                    INSERT OR REPLACE INTO books 
-                    (book_id, title, language, download_count, copyright_status, media_type, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    book_data['id'],
-                    book_data.get('title', 'Unknown Title'),
-                    book_data.get('languages', [''])[0] if book_data.get('languages') else None,
-                    book_data.get('download_count', 0),
-                    book_data.get('copyright'),
-                    book_data.get('media_type'),
-                    json.dumps(book_data)
-                ))
+                # Check if we have full_metadata column (migration 0.5.0+)
+                has_full_metadata = False
+                try:
+                    cursor.execute("SELECT full_metadata FROM books LIMIT 1")
+                    has_full_metadata = True
+                except sqlite3.OperationalError:
+                    pass
+                
+                # Prepare SQL statement based on schema version
+                if has_full_metadata:
+                    # Enhanced schema with metadata_version and full_metadata
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO books 
+                        (book_id, title, language, download_count, copyright_status, media_type, 
+                         metadata, metadata_version, full_metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        book_data['id'],
+                        book_data.get('title', 'Unknown Title'),
+                        book_data.get('languages', [''])[0] if book_data.get('languages') else None,
+                        book_data.get('download_count', 0),
+                        book_data.get('copyright'),
+                        book_data.get('media_type'),
+                        json.dumps(book_data),
+                        2,  # Current metadata version
+                        json.dumps(book_data.get('raw_data', book_data))  # Store complete API response
+                    ))
+                else:
+                    # Original schema
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO books 
+                        (book_id, title, language, download_count, copyright_status, media_type, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        book_data['id'],
+                        book_data.get('title', 'Unknown Title'),
+                        book_data.get('languages', [''])[0] if book_data.get('languages') else None,
+                        book_data.get('download_count', 0),
+                        book_data.get('copyright'),
+                        book_data.get('media_type'),
+                        json.dumps(book_data)
+                    ))
                 
                 book_id = book_data['id']
                 
                 # Handle authors
                 for author in book_data.get('authors', []):
+                    # Handle both string and dict authors
+                    if isinstance(author, dict):
+                        author_name = author.get('name')
+                        birth_year = author.get('birth_year')
+                        death_year = author.get('death_year')
+                    else:
+                        author_name = author
+                        birth_year = None
+                        death_year = None
+                    
+                    if not author_name:
+                        continue
+                        
                     # Insert author if not exists
                     cursor.execute("""
                         INSERT OR IGNORE INTO authors (name, birth_year, death_year)
                         VALUES (?, ?, ?)
-                    """, (
-                        author.get('name'),
-                        author.get('birth_year'),
-                        author.get('death_year')
-                    ))
+                    """, (author_name, birth_year, death_year))
                     
                     # Get author ID
-                    cursor.execute("SELECT author_id FROM authors WHERE name = ?", (author.get('name'),))
+                    cursor.execute("SELECT author_id FROM authors WHERE name = ?", (author_name,))
                     author_id = cursor.fetchone()[0]
                     
                     # Create book-author relationship
@@ -281,6 +318,50 @@ class BookDatabase:
                         VALUES (?, ?)
                     """, (book_id, subject_id))
                 
+                # Handle bookshelves if migration 0.5.0+ is applied
+                try:
+                    for bookshelf in book_data.get('bookshelves', []):
+                        # Insert bookshelf if not exists
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO bookshelves (name)
+                            VALUES (?)
+                        """, (bookshelf,))
+                        
+                        # Get bookshelf ID
+                        cursor.execute("SELECT bookshelf_id FROM bookshelves WHERE name = ?", (bookshelf,))
+                        bookshelf_id = cursor.fetchone()[0]
+                        
+                        # Create book-bookshelf relationship
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO book_bookshelves (book_id, bookshelf_id)
+                            VALUES (?, ?)
+                        """, (book_id, bookshelf_id))
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet, skip
+                    pass
+                
+                # Handle genres if migration 0.5.0+ is applied
+                try:
+                    for genre in book_data.get('genres', []):
+                        # Insert genre if not exists
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO genres (name)
+                            VALUES (?)
+                        """, (genre,))
+                        
+                        # Get genre ID
+                        cursor.execute("SELECT genre_id FROM genres WHERE name = ?", (genre,))
+                        genre_id = cursor.fetchone()[0]
+                        
+                        # Create book-genre relationship with source info
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO book_genres (book_id, genre_id, confidence, source)
+                            VALUES (?, ?, ?, ?)
+                        """, (book_id, genre_id, 1.0, 'api'))
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet, skip
+                    pass
+                
                 # Handle formats
                 formats = book_data.get('formats', {})
                 for format_type, url in formats.items():
@@ -289,35 +370,71 @@ class BookDatabase:
                         VALUES (?, ?, ?, ?)
                     """, (book_id, format_type, url, format_type))
                     
-                # Manually update FTS table since triggers are having issues
-                # Get authors for this book
-                cursor.execute("""
-                    SELECT GROUP_CONCAT(a.name, ' ') 
-                    FROM authors a 
-                    JOIN book_authors ba ON a.author_id = ba.author_id 
-                    WHERE ba.book_id = ?
-                """, (book_id,))
-                author_names = cursor.fetchone()[0] or ''
-                
-                # Get subjects for this book
-                cursor.execute("""
-                    SELECT GROUP_CONCAT(s.name, ' ') 
-                    FROM subjects s 
-                    JOIN book_subjects bs ON s.subject_id = bs.subject_id 
-                    WHERE bs.book_id = ?
-                """, (book_id,))
-                subject_names = cursor.fetchone()[0] or ''
-                
-                # Insert or replace in FTS table
-                cursor.execute("""
-                    INSERT OR REPLACE INTO books_fts(book_id, title, author, subjects)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    book_id,
-                    book_data.get('title', 'Unknown Title'),
-                    author_names,
-                    subject_names
-                ))
+                # Update FTS table
+                try:
+                    # Get authors for this book
+                    cursor.execute("""
+                        SELECT GROUP_CONCAT(a.name, ' ') 
+                        FROM authors a 
+                        JOIN book_authors ba ON a.author_id = ba.author_id 
+                        WHERE ba.book_id = ?
+                    """, (book_id,))
+                    author_names = cursor.fetchone()[0] or ''
+                    
+                    # Get subjects for this book
+                    cursor.execute("""
+                        SELECT GROUP_CONCAT(s.name, ' ') 
+                        FROM subjects s 
+                        JOIN book_subjects bs ON s.subject_id = bs.subject_id 
+                        WHERE bs.book_id = ?
+                    """, (book_id,))
+                    subject_names = cursor.fetchone()[0] or ''
+                    
+                    # Check if we have the enhanced FTS schema with bookshelves and genres
+                    try:
+                        # Get bookshelves for this book
+                        cursor.execute("""
+                            SELECT GROUP_CONCAT(b.name, ' ') 
+                            FROM bookshelves b 
+                            JOIN book_bookshelves bb ON b.bookshelf_id = bb.bookshelf_id 
+                            WHERE bb.book_id = ?
+                        """, (book_id,))
+                        bookshelf_names = cursor.fetchone()[0] or ''
+                        
+                        # Get genres for this book
+                        cursor.execute("""
+                            SELECT GROUP_CONCAT(g.name, ' ') 
+                            FROM genres g 
+                            JOIN book_genres bg ON g.genre_id = bg.genre_id 
+                            WHERE bg.book_id = ?
+                        """, (book_id,))
+                        genre_names = cursor.fetchone()[0] or ''
+                        
+                        # Insert or replace in enhanced FTS table
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO books_fts(book_id, title, author, subjects, bookshelves, genres)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            book_id,
+                            book_data.get('title', 'Unknown Title'),
+                            author_names,
+                            subject_names,
+                            bookshelf_names,
+                            genre_names
+                        ))
+                    except sqlite3.OperationalError:
+                        # Fall back to original FTS schema
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO books_fts(book_id, title, author, subjects)
+                            VALUES (?, ?, ?, ?)
+                        """, (
+                            book_id,
+                            book_data.get('title', 'Unknown Title'),
+                            author_names,
+                            subject_names
+                        ))
+                except sqlite3.OperationalError as e:
+                    logger.warning(f"Error updating FTS table: {e}")
                 
                 conn.commit()
                 return True
@@ -713,6 +830,206 @@ class BookDatabase:
         logger.warning("Migration system not active")
         return False
         
+    def get_book_genres(self, book_id: int) -> List[Dict[str, Any]]:
+        """Get all genres for a book.
+        
+        Args:
+            book_id: Project Gutenberg book ID
+            
+        Returns:
+            List of genre dictionaries with name, confidence, and source
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the genres table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT g.genre_id, g.name, bg.confidence, bg.source
+                        FROM genres g
+                        JOIN book_genres bg ON g.genre_id = bg.genre_id
+                        WHERE bg.book_id = ?
+                        ORDER BY bg.confidence DESC
+                    """, (book_id,))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet or book has no genres
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting genres for book {book_id}: {e}")
+            return []
+    
+    def get_book_bookshelves(self, book_id: int) -> List[str]:
+        """Get all bookshelves for a book.
+        
+        Args:
+            book_id: Project Gutenberg book ID
+            
+        Returns:
+            List of bookshelf names
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the bookshelves table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT b.name
+                        FROM bookshelves b
+                        JOIN book_bookshelves bb ON b.bookshelf_id = bb.bookshelf_id
+                        WHERE bb.book_id = ?
+                        ORDER BY b.name
+                    """, (book_id,))
+                    
+                    return [row['name'] for row in cursor.fetchall()]
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet or book has no bookshelves
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting bookshelves for book {book_id}: {e}")
+            return []
+    
+    def search_by_genre(self, genre: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Search for books by genre.
+        
+        Args:
+            genre: Genre to search for
+            limit: Maximum number of results
+            
+        Returns:
+            List of books with the specified genre
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the genres table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT b.*
+                        FROM books b
+                        JOIN book_genres bg ON b.book_id = bg.book_id
+                        JOIN genres g ON bg.genre_id = g.genre_id
+                        WHERE g.name LIKE ?
+                        ORDER BY bg.confidence DESC, b.download_count DESC
+                        LIMIT ?
+                    """, (f'%{genre}%', limit))
+                    
+                    books = []
+                    for row in cursor.fetchall():
+                        book = dict(row)
+                        if book['metadata']:
+                            book['metadata'] = json.loads(book['metadata'])
+                        books.append(book)
+                    
+                    return books
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet or no matching books
+                    return []
+        except Exception as e:
+            logger.error(f"Error searching books by genre {genre}: {e}")
+            return []
+    
+    def search_by_bookshelf(self, bookshelf: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Search for books by bookshelf.
+        
+        Args:
+            bookshelf: Bookshelf to search for
+            limit: Maximum number of results
+            
+        Returns:
+            List of books on the specified bookshelf
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the bookshelves table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT b.*
+                        FROM books b
+                        JOIN book_bookshelves bb ON b.book_id = bb.book_id
+                        JOIN bookshelves bs ON bb.bookshelf_id = bs.bookshelf_id
+                        WHERE bs.name LIKE ?
+                        ORDER BY b.download_count DESC
+                        LIMIT ?
+                    """, (f'%{bookshelf}%', limit))
+                    
+                    books = []
+                    for row in cursor.fetchall():
+                        book = dict(row)
+                        if book['metadata']:
+                            book['metadata'] = json.loads(book['metadata'])
+                        books.append(book)
+                    
+                    return books
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet or no matching books
+                    return []
+        except Exception as e:
+            logger.error(f"Error searching books by bookshelf {bookshelf}: {e}")
+            return []
+            
+    def get_all_genres(self) -> List[Dict[str, Any]]:
+        """Get all genres in the database.
+        
+        Returns:
+            List of genre dictionaries with id, name and book count
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the genres table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT g.genre_id, g.name, COUNT(bg.book_id) as book_count
+                        FROM genres g
+                        LEFT JOIN book_genres bg ON g.genre_id = bg.genre_id
+                        GROUP BY g.genre_id
+                        ORDER BY book_count DESC
+                    """)
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting all genres: {e}")
+            return []
+    
+    def get_all_bookshelves(self) -> List[Dict[str, Any]]:
+        """Get all bookshelves in the database.
+        
+        Returns:
+            List of bookshelf dictionaries with id, name and book count
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if the bookshelves table exists (migration 0.5.0+)
+                try:
+                    cursor.execute("""
+                        SELECT bs.bookshelf_id, bs.name, COUNT(bb.book_id) as book_count
+                        FROM bookshelves bs
+                        LEFT JOIN book_bookshelves bb ON bs.bookshelf_id = bb.bookshelf_id
+                        GROUP BY bs.bookshelf_id
+                        ORDER BY book_count DESC
+                    """)
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+                except sqlite3.OperationalError:
+                    # Table doesn't exist yet
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting all bookshelves: {e}")
+            return []
+    
     def get_statistics(self) -> Dict[str, Any]:
         """Get database statistics.
         
@@ -772,5 +1089,49 @@ class BookDatabase:
                 LIMIT 10
             """)
             stats['most_popular'] = [dict(row) for row in cursor.fetchall()]
+            
+            # Enhanced stats if 0.5.0+ migration applied
+            try:
+                # Total genres
+                cursor.execute("SELECT COUNT(*) FROM genres")
+                stats['total_genres'] = cursor.fetchone()[0]
+                
+                # Total bookshelves
+                cursor.execute("SELECT COUNT(*) FROM bookshelves")
+                stats['total_bookshelves'] = cursor.fetchone()[0]
+                
+                # Top genres
+                cursor.execute("""
+                    SELECT g.name, COUNT(bg.book_id) as count
+                    FROM genres g
+                    JOIN book_genres bg ON g.genre_id = bg.genre_id
+                    GROUP BY g.genre_id
+                    ORDER BY count DESC
+                    LIMIT 10
+                """)
+                stats['top_genres'] = {row['name']: row['count'] for row in cursor.fetchall()}
+                
+                # Top bookshelves
+                cursor.execute("""
+                    SELECT bs.name, COUNT(bb.book_id) as count
+                    FROM bookshelves bs
+                    JOIN book_bookshelves bb ON bs.bookshelf_id = bb.bookshelf_id
+                    GROUP BY bs.bookshelf_id
+                    ORDER BY count DESC
+                    LIMIT 10
+                """)
+                stats['top_bookshelves'] = {row['name']: row['count'] for row in cursor.fetchall()}
+                
+                # Metadata version stats
+                cursor.execute("""
+                    SELECT metadata_version, COUNT(*) as count
+                    FROM books
+                    GROUP BY metadata_version
+                """)
+                stats['metadata_versions'] = {row['metadata_version']: row['count'] for row in cursor.fetchall()}
+                
+            except sqlite3.OperationalError:
+                # Enhanced tables don't exist yet
+                pass
             
             return stats

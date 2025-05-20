@@ -302,11 +302,14 @@ class MirrorManager:
             # PGLAF structure
             return f"{mirror_url.rstrip('/')}/cache/epub/{book_id}/pg{book_id}.epub"
         elif "nabasny.com" in mirror_url:
-            # Nabasny structure
-            return f"{mirror_url.rstrip('/')}/{book_id}.epub"
+            # Nabasny structure - they use ebooks/ID.epub3.images format
+            return f"{mirror_url.rstrip('/')}/ebooks/{book_id}.epub3.images"
         elif "xmission.com" in mirror_url:
             # xmission structure
             return f"{mirror_url.rstrip('/')}/cache/epub/{book_id}/pg{book_id}.epub"
+        elif "mirrorservice.org" in mirror_url:
+            # UK Mirror Service structure
+            return f"{mirror_url.rstrip('/')}/{book_id}/pg{book_id}.epub"
         else:
             # Generic fallback - most mirrors use this structure
             return f"{mirror_url.rstrip('/')}/cache/epub/{book_id}/pg{book_id}.epub"

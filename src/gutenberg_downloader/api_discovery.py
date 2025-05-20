@@ -1,7 +1,7 @@
 """Book discovery service using the Gutendex API."""
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from .api_client import GutendexAPIClient
 from .epub_downloader import EpubDownloader
@@ -38,11 +38,17 @@ class APIBookDiscovery:
         Returns:
             Formatted book data
         """
-        # Extract author names
+        # Extract author names and detailed info
         authors = []
+        author_details = []
         for author in api_book.get("authors", []):
             if author.get("name"):
                 authors.append(author["name"])
+                author_details.append({
+                    "name": author.get("name", "Unknown Author"),
+                    "birth_year": author.get("birth_year"),
+                    "death_year": author.get("death_year"),
+                })
         
         # Find EPUB download URL
         epub_url = None
@@ -56,8 +62,12 @@ class APIBookDiscovery:
         languages = api_book.get("languages", [])
         language = languages[0] if languages else "unknown"
         
-        # Get subjects (for genre)
+        # Get subjects and bookshelves (for genre classification)
         subjects = api_book.get("subjects", [])
+        bookshelves = api_book.get("bookshelves", [])
+        
+        # Extract genre categories from subjects and bookshelves
+        genres = self._extract_genres_from_metadata(subjects, bookshelves)
         
         return {
             "book_id": api_book.get("id"),
@@ -74,11 +84,147 @@ class APIBookDiscovery:
                 "author": ", ".join(authors),
                 "language": language,
                 "subjects": subjects,
+                "bookshelves": bookshelves,
+                "genres": genres,
                 "copyright": api_book.get("copyright"),
                 "download_count": api_book.get("download_count", 0),
+                "media_type": api_book.get("media_type"),
+                "authors_detailed": author_details,
+                "raw_data": api_book,  # Store the complete API response for future reference
             },
             "popularity_rank": None,  # API doesn't provide explicit rank
         }
+        
+    def _extract_genres_from_metadata(self, subjects: List[str], bookshelves: List[str]) -> List[str]:
+        """Extract standardized genre classifications from subjects and bookshelves.
+        
+        Args:
+            subjects: List of subject tags from API
+            bookshelves: List of bookshelf categories from API
+            
+        Returns:
+            List of standardized genre classifications
+        """
+        genres = set()
+        
+        # Common genre keywords to look for in subjects and bookshelves
+        genre_keywords = {
+            "fiction": "Fiction",
+            "adventure": "Adventure",
+            "science fiction": "Science Fiction",
+            "sci-fi": "Science Fiction",
+            "scifi": "Science Fiction",
+            "fantasy": "Fantasy",
+            "horror": "Horror",
+            "mystery": "Mystery",
+            "detective": "Mystery/Detective",
+            "thriller": "Thriller",
+            "romance": "Romance",
+            "love stories": "Romance",
+            "historical": "Historical",
+            "biography": "Biography/Memoir",
+            "autobiography": "Biography/Memoir",
+            "memoir": "Biography/Memoir",
+            "drama": "Drama",
+            "comedy": "Comedy",
+            "poetry": "Poetry",
+            "poem": "Poetry",
+            "philosophy": "Philosophy",
+            "religion": "Religion/Spirituality",
+            "spiritual": "Religion/Spirituality",
+            "children": "Children's",
+            "juvenile": "Children's/Young Adult",
+            "young adult": "Young Adult",
+            "western": "Western",
+            "war": "War/Military",
+            "military": "War/Military",
+            "political": "Political",
+            "satire": "Satire",
+            "gothic": "Gothic",
+            "classic": "Classic Literature",
+            "essay": "Essays",
+            "short story": "Short Stories",
+            "travel": "Travel",
+            "science": "Science",
+            "history": "History",
+            "folklore": "Folklore/Mythology",
+            "myth": "Folklore/Mythology",
+            "fairy tale": "Fairy Tales",
+            "art": "Art",
+            "music": "Music",
+            "cookery": "Cooking/Food",
+            "food": "Cooking/Food",
+            "education": "Education",
+            "reference": "Reference",
+            "comic": "Comics/Graphic Novels",
+            "play": "Plays",
+            "epic": "Epic",
+            "erotica": "Erotica",
+            "crime": "Crime",
+            "supernatural": "Supernatural",
+            "dystopian": "Dystopian",
+            "utopian": "Utopian",
+            "apocalyptic": "Apocalyptic",
+            "steampunk": "Steampunk",
+            "cyberpunk": "Cyberpunk",
+            "alternative history": "Alternative History",
+            "self-help": "Self-Help",
+            "business": "Business",
+            "economics": "Economics",
+            "social": "Social Sciences",
+            "anthropology": "Anthropology",
+            "psychology": "Psychology",
+            "sociology": "Sociology",
+            "nature": "Nature/Environment",
+            "environment": "Nature/Environment",
+            "medicine": "Medicine/Health",
+            "health": "Medicine/Health",
+            "law": "Law",
+            "mathematics": "Mathematics",
+            "physics": "Physics",
+            "chemistry": "Chemistry",
+            "biology": "Biology",
+            "sports": "Sports/Recreation",
+            "recreation": "Sports/Recreation",
+            "technology": "Technology",
+            "engineering": "Engineering",
+            "architecture": "Architecture",
+            "gardening": "Gardening",
+            "craft": "Crafts/Hobbies",
+            "hobby": "Crafts/Hobbies",
+            "humor": "Humor",
+            "language": "Language/Linguistics",
+            "linguistics": "Language/Linguistics",
+            "journalism": "Journalism",
+            "literary criticism": "Literary Criticism",
+            "paranormal": "Paranormal",
+            "espionage": "Espionage"
+        }
+        
+        # Check subjects for genre keywords
+        for subject in subjects:
+            subject_lower = subject.lower()
+            # Direct match
+            for keyword, genre in genre_keywords.items():
+                if keyword in subject_lower:
+                    genres.add(genre)
+        
+        # Check bookshelves for genre keywords
+        for shelf in bookshelves:
+            shelf_lower = shelf.lower()
+            # Look for "Browsing: X", "Best Books Ever", etc.
+            if "browsing:" in shelf_lower:
+                category = shelf_lower.split("browsing:")[1].strip()
+                for keyword, genre in genre_keywords.items():
+                    if keyword in category:
+                        genres.add(genre)
+            else:
+                # Direct match
+                for keyword, genre in genre_keywords.items():
+                    if keyword in shelf_lower:
+                        genres.add(genre)
+        
+        return sorted(list(genres))
     
     def discover_popular_english_epubs(
         self,

@@ -89,6 +89,32 @@
 - Added detailed API usage examples
 - Documented mirror site capabilities and configuration options
 
+### ✅ Phase 9: Terminal User Interface (TUI)
+- Implemented comprehensive TUI using Textual framework
+- Added real-time download progress visualization
+- Created interactive book browsing and search 
+- Implemented download queue management with parallel tracking
+- Added mirror site health visualization and management
+- Created tabbed interface with keyboard navigation
+- Integrated with existing CLI commands
+- Added comprehensive settings management
+- Created detailed help and documentation
+- Added test suite for TUI components
+
+### ✅ Phase 10: Enhanced Metadata and Genre Classification System
+- Added comprehensive metadata extraction from multiple sources
+- Implemented standardized genre classification system
+- Enhanced database schema to store bookshelves and genres
+- Created mapping between subjects, bookshelves, and genres
+- Added Library of Congress Classification (LCC) support
+- Implemented metadata refresh command for updating book information
+- Integrated metadata extraction with CSV and RDF catalog imports
+- Added automatic genre detection from subjects and bookshelves
+- Enhanced full-text search to include genre and bookshelf information
+- Improved filter download command with genre and subject filtering
+- Added detailed metadata statistics to database commands
+- Complete documentation of the metadata and genre features
+
 ## Test Coverage
 
 Current test coverage: **86%**
@@ -118,11 +144,11 @@ Current test coverage: **86%**
 
 ## Next Steps
 1. Additional features:
-   - Implement Terminal User Interface (TUI) for interactive browsing
-   - Add metadata extraction from EPUB files
-   - Support for other formats besides EPUB
-   - Create tools for organizing downloaded books
+   - Support for other formats besides EPUB (MOBI, PDF)
+   - Create tools for organizing downloaded books by genre and author
    - Add integration with e-readers and Calibre
+   - Enhanced TUI with ebook preview capabilities
+   - Add more advanced genre search and filtering options
 
 2. Improvements:
    - Further optimize mirror site selection and rotation algorithms
@@ -130,20 +156,27 @@ Current test coverage: **86%**
    - Add more sophisticated rate limiting based on mirror site capabilities
    - Expand mirror site support to more regions
    - Improve error handling for various mirror site structures
+   - Expand automatic 404 handling with more intelligence about file paths
+   - Build a shared knowledge base of which mirrors have which books
+   - Enhance metadata extraction to include more detailed publication information
+   - Improve genre classification with hierarchical relationships
    
 3. Long-term plans:
-   - Add web interface or GUI
-   - Implement machine learning for book recommendations
+   - Add web interface or GUI with genre browsing
+   - Implement machine learning for book recommendations based on genres
    - Add support for other e-book sources
    - Add distributed download capabilities across different machines
    - Create a PyPI package for easier installation
+   - Develop an interactive genre browser and recommendation system
 
 ## Development Timeline
 
 - **v0.1.0**: Initial release with basic functionality (Completed)
 - **v0.2.0**: Added database integration and asynchronous capabilities (Completed)
 - **v0.3.0**: Added smart download and resume capabilities (Completed)
-- **v0.3.5**: Added mirror site support for faster, limit-avoiding downloads (Current)
-- **v0.4.0**: TUI and enhanced interactive features (Planned)
-- **v0.5.0**: Content processing and metadata extraction (Planned)
+- **v0.3.5**: Added mirror site support for faster, limit-avoiding downloads (Completed)
+- **v0.3.6**: Added 404 error smart handling and auto mirror fallback (Completed)
+- **v0.4.0**: Added Terminal User Interface (TUI) with real-time progress tracking (Completed)
+- **v0.5.0**: Enhanced metadata extraction and genre classification system (Current)
+- **v0.6.0**: Support for additional formats and organizational tools (Planned)
 - **v1.0.0**: Full stable release with all planned features (Planned)
