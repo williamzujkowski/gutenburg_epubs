@@ -1,13 +1,14 @@
 """Asynchronous EPUB downloader module with concurrent download capabilities.
 
 This module provides async functionality for downloading EPUB files from Project Gutenberg
-with support for concurrent downloads and progress reporting.
+with support for concurrent downloads, progress reporting, and resumable downloads.
 """
 
 import asyncio
 import logging
+import os
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union, Tuple
 
 import aiofiles
 import httpx
@@ -134,7 +135,7 @@ class AsyncEpubDownloader:
         progress_bar: bool = True,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> bool:
-        """Stream download with progress tracking.
+        """Stream download with progress tracking and resume capability.
 
         Args:
             url: URL to download from.
@@ -145,26 +146,57 @@ class AsyncEpubDownloader:
         Returns:
             True if download was successful, False otherwise.
         """
+        # Check if file exists and we can resume
+        existing_size = 0
+        mode = "wb"
+        
+        if output_path.exists():
+            existing_size = output_path.stat().st_size
+            if existing_size > 0:
+                logger.info(f"Found existing file {output_path.name} with {existing_size} bytes. Attempting resume.")
+                mode = "ab"  # Append mode for resume
+
         try:
-            async with self.client.stream("GET", url) as response:
+            # Set up headers for resume if needed
+            headers = {}
+            if existing_size > 0:
+                headers["Range"] = f"bytes={existing_size}-"
+                
+            async with self.client.stream("GET", url, headers=headers) as response:
+                # Check if server supports resume
+                if existing_size > 0:
+                    if response.status_code == 206:  # Partial Content
+                        logger.info(f"Resuming download from byte position {existing_size}")
+                    else:
+                        # Server doesn't support range requests, start over
+                        logger.warning("Server doesn't support resume, starting from beginning")
+                        existing_size = 0
+                        mode = "wb"
+                        # Make a new request without range header
+                        response = await self.client.stream("GET", url)
+                
                 response.raise_for_status()
 
                 # Get content length for progress tracking
-                total_size = int(response.headers.get("content-length", 0))
+                if response.status_code == 206:  # Partial content
+                    total_size = existing_size + int(response.headers.get("content-length", 0))
+                else:
+                    total_size = int(response.headers.get("content-length", 0))
 
                 # Set up progress bar if requested
                 pbar = None
                 if progress_bar and total_size > 0:
                     pbar = tqdm(
                         total=total_size,
+                        initial=existing_size,  # Start from existing size
                         unit="B",
                         unit_scale=True,
                         desc=output_path.name,
                     )
 
                 # Write content to file
-                async with aiofiles.open(output_path, "wb") as file:
-                    downloaded = 0
+                async with aiofiles.open(output_path, mode) as file:
+                    downloaded = existing_size
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         await file.write(chunk)
                         downloaded += len(chunk)
@@ -183,6 +215,7 @@ class AsyncEpubDownloader:
                     logger.warning(
                         f"Downloaded size mismatch: expected {total_size}, got {downloaded}"
                     )
+                    # Don't delete the partial file - it can be resumed
                     return False
 
                 return True
@@ -309,3 +342,71 @@ class AsyncEpubDownloader:
             overall_progress_callback(completed, total_tasks)
 
         return success
+        
+    async def find_incomplete_downloads(self, download_dir: Union[str, Path]) -> list[Path]:
+        """Find potentially incomplete downloads in the given directory.
+        
+        This scans for files that might be partial downloads by comparing their size
+        with typical EPUB file sizes. Files under 10KB are likely incomplete.
+        
+        Args:
+            download_dir: Directory to scan for incomplete downloads.
+            
+        Returns:
+            List of paths to potentially incomplete downloads.
+        """
+        download_dir = Path(download_dir)
+        incomplete_files = []
+        
+        if not download_dir.exists() or not download_dir.is_dir():
+            logger.warning(f"Download directory {download_dir} doesn't exist or is not a directory")
+            return incomplete_files
+            
+        for file_path in download_dir.glob("*.epub"):
+            try:
+                # Check if file exists and is suspiciously small (likely incomplete)
+                if file_path.exists() and file_path.stat().st_size < 10240:  # Less than 10KB
+                    incomplete_files.append(file_path)
+                    logger.info(f"Found potential incomplete download: {file_path}")
+            except Exception as e:
+                logger.error(f"Error checking file {file_path}: {e}")
+                
+        return incomplete_files
+        
+    async def resume_incomplete_downloads(
+        self,
+        incomplete_files: list[Path],
+        url_mapping: Dict[Path, str],
+        progress_bar: bool = True,
+    ) -> Dict[Path, bool]:
+        """Resume downloading incomplete files with their respective URLs.
+        
+        Args:
+            incomplete_files: List of paths to incomplete files.
+            url_mapping: Dictionary mapping file paths to their download URLs.
+            progress_bar: Whether to show progress bars during downloads.
+            
+        Returns:
+            Dictionary mapping file paths to download success status.
+        """
+        results = {}
+        
+        for file_path in incomplete_files:
+            if file_path not in url_mapping:
+                logger.warning(f"No URL found for {file_path}, skipping resume")
+                results[file_path] = False
+                continue
+                
+            url = url_mapping[file_path]
+            logger.info(f"Resuming download for {file_path} from {url}")
+            
+            success = await self.download_epub(
+                url=url,
+                output_path=file_path,
+                progress_bar=progress_bar,
+                verify_size=True
+            )
+            
+            results[file_path] = success
+            
+        return results

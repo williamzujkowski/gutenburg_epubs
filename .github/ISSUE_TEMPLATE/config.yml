@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/williamzujkowski/gutenburg_epubs/discussions
+    about: Please ask and answer questions here.
+  - name: Documentation
+    url: https://github.com/williamzujkowski/gutenburg_epubs#readme
+    about: Check out the README for usage information.

@@ -365,3 +365,195 @@ class TestEpubDownloader:
 
         with pytest.raises(httpx.HTTPError):
             downloader.stream_download(url, output_stream)
+            
+    def test_resume_download_with_existing_file(self, downloader, tmp_path):
+        """Test that download can resume from an existing file."""
+        url = "https://example.com/book.epub"
+        output_path = tmp_path / "resumable_book.epub"
+        
+        # Create partial content already in file
+        existing_content = b"Partial EPUB content"
+        output_path.write_bytes(existing_content)
+        
+        # Additional content to be downloaded
+        additional_content = b" - Rest of the content"
+        full_content = existing_content + additional_content
+        
+        # Mock HEAD request for file size
+        head_response = Mock()
+        head_response.headers = {"content-length": str(len(full_content))}
+        head_response.raise_for_status = Mock()
+        downloader.client.head.return_value = head_response
+        
+        # Mock first request with Range header
+        range_response = Mock()
+        range_response.status_code = 206  # Partial Content
+        range_response.headers = {"content-length": str(len(additional_content))}
+        range_response.raise_for_status = Mock()
+        range_response.iter_bytes = Mock(return_value=[additional_content])
+        range_response.__enter__ = Mock(return_value=range_response)
+        range_response.__exit__ = Mock(return_value=None)
+        
+        # Create a mock that checks if the Range header is set correctly
+        def stream_side_effect(method, url, headers=None, **kwargs):
+            if headers and "Range" in headers:
+                if headers["Range"] == f"bytes={len(existing_content)}-":
+                    return range_response
+            return None
+        
+        downloader.client.stream = Mock(side_effect=stream_side_effect)
+        
+        # Use a mocked open to avoid actual file operations
+        # but verify the mode is "ab" for appending
+        mock_open = Mock()
+        mock_file = Mock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        
+        with patch("builtins.open", mock_open):
+            result = downloader.download_epub(url, output_path, resume=True)
+            
+            # Check that Range header was used
+            downloader.client.stream.assert_called_once()
+            mock_open.assert_called_once()
+            
+            # Verify append mode was used
+            args, kwargs = mock_open.call_args
+            assert args[1] == "ab"  # Should be in append mode
+            
+            assert result is True
+    
+    def test_server_does_not_support_resume(self, downloader, tmp_path):
+        """Test behavior when server doesn't support resume."""
+        url = "https://example.com/book.epub"
+        output_path = tmp_path / "non_resumable_book.epub"
+        
+        # Create partial content already in file
+        existing_content = b"Partial EPUB content"
+        output_path.write_bytes(existing_content)
+        
+        # Content for full download
+        full_content = b"Complete different content"
+        
+        # Mock HEAD request
+        head_response = Mock()
+        head_response.headers = {"content-length": str(len(full_content))}
+        head_response.raise_for_status = Mock()
+        downloader.client.head.return_value = head_response
+        
+        # Mock range request that doesn't return 206
+        non_range_response = Mock()
+        non_range_response.status_code = 200  # OK but not Partial Content
+        non_range_response.headers = {"content-length": str(len(full_content))}
+        non_range_response.raise_for_status = Mock()
+        non_range_response.iter_bytes = Mock(return_value=[full_content])
+        non_range_response.__enter__ = Mock(return_value=non_range_response)
+        non_range_response.__exit__ = Mock(return_value=None)
+        
+        # Standard response for second request
+        standard_response = Mock()
+        standard_response.status_code = 200
+        standard_response.headers = {"content-length": str(len(full_content))}
+        standard_response.raise_for_status = Mock()
+        standard_response.iter_bytes = Mock(return_value=[full_content])
+        standard_response.__enter__ = Mock(return_value=standard_response)
+        standard_response.__exit__ = Mock(return_value=None)
+        
+        # Side effect to handle the two requests
+        request_count = 0
+        def stream_side_effect(method, url, headers=None, **kwargs):
+            nonlocal request_count
+            
+            if request_count == 0:
+                request_count += 1
+                return non_range_response
+            else:
+                return standard_response
+        
+        downloader.client.stream = Mock(side_effect=stream_side_effect)
+        
+        # Use a mocked open to verify mode changes
+        mock_open = Mock()
+        mock_file = Mock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        
+        with patch("builtins.open", mock_open):
+            result = downloader.download_epub(url, output_path, resume=True)
+            
+            # Check stream was called twice - once with Range, once without
+            assert downloader.client.stream.call_count == 2
+            assert result is True
+            
+            # Verify calls to open
+            assert mock_open.call_count == 1
+            
+            # The second call should be in write mode, not append mode
+            args, kwargs = mock_open.call_args
+            assert args[1] == "wb"  # Should fall back to write mode
+    
+    def test_find_incomplete_downloads(self, downloader, tmp_path):
+        """Test finding incomplete downloads in a directory."""
+        # Create complete and incomplete files
+        incomplete1 = tmp_path / "incomplete1.epub"
+        incomplete2 = tmp_path / "incomplete2.epub"
+        complete = tmp_path / "complete.epub"
+        non_epub = tmp_path / "not_an_epub.txt"
+        
+        # Write some content (incomplete files under 10KB)
+        incomplete1.write_bytes(b"Small content 1")
+        incomplete2.write_bytes(b"Small content 2")
+        
+        # Write a complete file (> 10KB)
+        complete.write_bytes(b"X" * 11000)  # 11KB, should be considered complete
+        
+        # Create a non-EPUB file
+        non_epub.write_bytes(b"Not an EPUB file")
+        
+        # Find incomplete downloads
+        result = downloader.find_incomplete_downloads(tmp_path)
+        
+        # Should find only the incomplete EPUB files
+        assert len(result) == 2
+        file_paths = [p.name for p in result]
+        assert "incomplete1.epub" in file_paths
+        assert "incomplete2.epub" in file_paths
+        assert "complete.epub" not in file_paths
+        assert "not_an_epub.txt" not in file_paths
+    
+    def test_resume_incomplete_downloads(self, downloader, tmp_path):
+        """Test resuming multiple incomplete downloads."""
+        # Create incomplete files
+        file1 = tmp_path / "book1.epub"
+        file2 = tmp_path / "book2.epub"
+        file1.write_bytes(b"Partial content 1")
+        file2.write_bytes(b"Partial content 2")
+        
+        # Define URL mapping
+        url_mapping = {
+            file1: "https://example.com/book1.epub",
+            file2: "https://example.com/book2.epub",
+            tmp_path / "non_existent.epub": "https://example.com/non_existent.epub"
+        }
+        
+        # Mock download_epub to succeed for file1 and fail for file2
+        def download_side_effect(url, output_path, **kwargs):
+            if str(output_path) == str(file1):
+                return True
+            else:
+                return False
+                
+        with patch.object(
+            downloader, "download_epub", side_effect=download_side_effect
+        ):
+            results = downloader.resume_incomplete_downloads(
+                [file1, file2, tmp_path / "non_existent.epub"],  # Include a non-existent file
+                url_mapping
+            )
+            
+            # Should have results for all three files
+            assert len(results) == 3
+            assert results[file1] is True
+            assert results[file2] is False
+            assert results[tmp_path / "non_existent.epub"] is False  # Should fail
+            
+            # download_epub should be called twice (once for each existing file)
+            assert downloader.download_epub.call_count == 2

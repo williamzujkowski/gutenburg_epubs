@@ -1,0 +1,45 @@
+# Gutenberg Downloader Example Configuration
+# Copy this file to one of these locations:
+# - ./gutenberg_downloader.yaml (current directory)
+# - ~/.config/gutenberg_downloader.yaml (user config directory)
+
+# Database settings
+db_path: "gutenberg_books.db"  # Path to SQLite database file
+
+# API settings
+api_base_url: "https://gutendex.com"  # Base URL for Gutendex API
+api_timeout: 30                        # Request timeout in seconds
+api_retry_count: 3                     # Number of retries for failed requests
+api_delay: 1.0                         # Delay between requests in seconds
+
+# Download settings
+download_dir: "downloads"              # Directory for downloaded files
+max_concurrent_downloads: 5            # Maximum concurrent downloads (async mode)
+skip_existing: true                    # Skip files that already exist
+smart_download: true                   # Enable resume for interrupted downloads
+
+# Cache settings
+cache_dir: ".cache"                    # Directory for cache files
+cache_expiry: 86400                    # Cache expiry in seconds (24 hours)
+memory_cache_expiry: 300               # Memory cache expiry in seconds (5 min)
+
+# Queue settings
+queue_workers: 3                       # Number of workers for queue processing
+queue_state_file: "queue_state.json"   # File to store queue state
+
+# Scraper settings
+user_agent: "GutenbergEPUBCrawler/0.1.0 (+william.zujkowski@gmail.com)"
+rate_limit: 1.0                        # Delay between requests in seconds
+respect_robots_txt: true               # Follow robots.txt rules
+
+# Export settings
+default_export_format: "csv"           # Default format for exports (csv, json, excel, md)
+pretty_json: true                      # Pretty print JSON exports
+
+# TUI settings
+tui_theme: "dark"                      # Theme for terminal UI (dark or light)
+tui_refresh_rate: 0.5                  # Refresh rate in seconds
+
+# Logging settings
+log_level: "INFO"                      # Logging level (DEBUG, INFO, WARNING, ERROR)
+log_file: ""                           # Log file path (empty = stdout only)

@@ -64,3 +64,8 @@ dmypy.json
 # Project specific
 downloads/
 *.epub
+*.db
+.cache/
+queue_state.json
+gutenberg_downloader.yaml
+test_config.yaml

@@ -394,3 +394,213 @@ class TestAsyncEpubDownloader:
             assert max_active <= downloader.max_concurrency  # Should never exceed concurrency limit
             assert len(results) == 5
             assert all(results.values())
+            
+    @pytest.mark.asyncio
+    async def test_resume_download_with_existing_file(self, downloader, tmp_path):
+        """Test resuming a download with an existing file."""
+        url = "http://example.com/resumable.epub"
+        output_path = tmp_path / "partial.epub"
+        
+        # Create a partial file
+        existing_content = b"Partial file content"
+        output_path.write_bytes(existing_content)
+        existing_size = len(existing_content)
+        
+        # Additional content to append
+        additional_content = b"Additional content to resume"
+        total_content_size = existing_size + len(additional_content)
+        
+        # Create mock responses
+        # First response should be a partial content response
+        partial_response = Mock()
+        partial_response.status_code = 206  # Partial Content
+        partial_response.headers = {"content-length": str(len(additional_content))}
+        partial_response.raise_for_status = Mock(return_value=None)
+        
+        # Set up async generator for aiter_bytes
+        async def mock_async_generator():
+            yield additional_content
+            
+        partial_response.aiter_bytes = mock_async_generator
+        
+        # Set up context manager for stream response
+        mock_stream_context = AsyncMock()
+        mock_stream_context.__aenter__.return_value = partial_response
+        mock_stream_context.__aexit__.return_value = None
+        
+        # Set up mocks for aiofiles
+        mock_file = AsyncMock()
+        mock_file_context = AsyncMock()
+        mock_file_context.__aenter__.return_value = mock_file
+        mock_file_context.__aexit__.return_value = None
+        
+        # Create a side effect to check that Range header is being used
+        def stream_side_effect(method, url, headers=None, **kwargs):
+            if headers and "Range" in headers:
+                expected_range = f"bytes={existing_size}-"
+                assert headers["Range"] == expected_range
+                return mock_stream_context
+            return None
+            
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.stat", return_value=Mock(st_size=existing_size)),
+            patch.object(downloader.client, "stream", side_effect=stream_side_effect),
+            patch("aiofiles.open", return_value=mock_file_context),
+        ):
+            result = await downloader._stream_download(
+                url,
+                output_path,
+                progress_bar=False
+            )
+            
+            assert result is True
+            # Verify aiofiles.open was called with append mode
+            patch("aiofiles.open").assert_called_once()
+            args, kwargs = patch("aiofiles.open").call_args
+            assert args[1] == "ab"  # Should be in append mode
+            
+    @pytest.mark.asyncio
+    async def test_server_does_not_support_resume(self, downloader, tmp_path):
+        """Test behavior when server doesn't support resuming."""
+        url = "http://example.com/non_resumable.epub"
+        output_path = tmp_path / "partial.epub"
+        
+        # Create a partial file
+        existing_content = b"Partial file content"
+        output_path.write_bytes(existing_content)
+        existing_size = len(existing_content)
+        
+        # Full content when server doesn't support resume
+        full_content = b"Complete different content for non-resumable download"
+        
+        # Create mock responses
+        # First response should not be a partial content response
+        normal_response = Mock()
+        normal_response.status_code = 200  # OK, not 206 Partial Content
+        normal_response.headers = {"content-length": str(len(full_content))}
+        normal_response.raise_for_status = Mock(return_value=None)
+        
+        # Set up async generator for aiter_bytes for the first response
+        async def mock_normal_generator():
+            yield full_content
+            
+        normal_response.aiter_bytes = mock_normal_generator
+        
+        # Set up context manager for first response
+        mock_normal_context = AsyncMock()
+        mock_normal_context.__aenter__.return_value = normal_response
+        mock_normal_context.__aexit__.return_value = None
+        
+        # Set up mocks for aiofiles
+        mock_file = AsyncMock()
+        mock_file_context = AsyncMock()
+        mock_file_context.__aenter__.return_value = mock_file
+        mock_file_context.__aexit__.return_value = None
+        
+        # Mock the client.stream method - first with range header, then without
+        first_call = True
+        def stream_side_effect(method, url, headers=None, **kwargs):
+            nonlocal first_call
+            
+            if first_call:
+                # First call should have Range header
+                assert headers and "Range" in headers
+                first_call = False
+                # Return a regular 200 response, not a 206 Partial Content
+                return mock_normal_context
+            else:
+                # Second call without Range header
+                assert headers is None or "Range" not in headers
+                return mock_normal_context
+                
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.stat", return_value=Mock(st_size=existing_size)),
+            patch.object(downloader.client, "stream", side_effect=stream_side_effect),
+            patch("aiofiles.open", return_value=mock_file_context),
+        ):
+            result = await downloader._stream_download(
+                url,
+                output_path,
+                progress_bar=False
+            )
+            
+            assert result is True
+            # Should make two calls to stream - one with Range header, one without
+            assert downloader.client.stream.call_count == 2
+            
+    @pytest.mark.asyncio
+    async def test_find_incomplete_downloads(self, downloader, tmp_path):
+        """Test finding incomplete downloads in a directory."""
+        # Create a mix of complete and incomplete files
+        incomplete1 = tmp_path / "incomplete1.epub"
+        incomplete2 = tmp_path / "incomplete2.epub"
+        complete = tmp_path / "complete.epub"
+        non_epub = tmp_path / "not_an_epub.txt"
+        
+        # Write content to files
+        incomplete1.write_bytes(b"Small content 1")  # Under 10KB = incomplete
+        incomplete2.write_bytes(b"Small content 2")  # Under 10KB = incomplete
+        complete.write_bytes(b"X" * 11000)  # Over 10KB = complete
+        non_epub.write_bytes(b"Not an EPUB file")
+        
+        # Mock Path.glob to return our test files
+        def mock_glob(pattern):
+            if pattern == "*.epub":
+                return [incomplete1, incomplete2, complete]
+            return []
+            
+        # Set up our mock patches
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch("pathlib.Path.glob", side_effect=mock_glob),
+        ):
+            result = await downloader.find_incomplete_downloads(tmp_path)
+            
+            # Should find only the incomplete EPUB files
+            assert len(result) == 2
+            file_paths = [p.name for p in result]
+            assert "incomplete1.epub" in file_paths
+            assert "incomplete2.epub" in file_paths
+            assert "complete.epub" not in file_paths
+            assert "not_an_epub.txt" not in file_paths
+            
+    @pytest.mark.asyncio
+    async def test_resume_incomplete_downloads(self, downloader, tmp_path):
+        """Test resuming multiple incomplete downloads."""
+        # Create incomplete files
+        file1 = tmp_path / "book1.epub"
+        file2 = tmp_path / "book2.epub"
+        
+        # Create URL mapping
+        url_mapping = {
+            file1: "http://example.com/book1.epub",
+            file2: "http://example.com/book2.epub",
+            tmp_path / "missing.epub": "http://example.com/missing.epub",
+        }
+        
+        # Mock download_epub to succeed for file1 and fail for file2
+        async def mock_download_epub(url, output_path, **kwargs):
+            if output_path == file1:
+                return True
+            else:
+                return False
+                
+        # Set up our mocks
+        with patch.object(downloader, "download_epub", side_effect=mock_download_epub):
+            result = await downloader.resume_incomplete_downloads(
+                [file1, file2, tmp_path / "missing.epub"],
+                url_mapping,
+                progress_bar=False
+            )
+            
+            # Should have results for all files
+            assert len(result) == 3
+            assert result[file1] is True
+            assert result[file2] is False
+            assert result[tmp_path / "missing.epub"] is False  # Missing file should fail
+            
+            # download_epub should be called for each file
+            assert downloader.download_epub.call_count == 3

@@ -1,0 +1,45 @@
+# Gutenberg Downloader Example Configuration (TOML format)
+# Copy this file to one of these locations:
+# - ./gutenberg_downloader.toml (current directory)
+# - ~/.config/gutenberg_downloader.toml (user config directory)
+
+# Database settings
+db_path = "gutenberg_books.db"
+
+# API settings
+api_base_url = "https://gutendex.com"
+api_timeout = 30
+api_retry_count = 3
+api_delay = 1.0
+
+# Download settings
+download_dir = "downloads"
+max_concurrent_downloads = 5
+skip_existing = true
+smart_download = true
+
+# Cache settings
+cache_dir = ".cache"
+cache_expiry = 86400  # 24 hours
+memory_cache_expiry = 300  # 5 minutes
+
+# Queue settings
+queue_workers = 3
+queue_state_file = "queue_state.json"
+
+# Scraper settings
+user_agent = "GutenbergEPUBCrawler/0.1.0 (+william.zujkowski@gmail.com)"
+rate_limit = 1.0
+respect_robots_txt = true
+
+# Export settings
+default_export_format = "csv"
+pretty_json = true
+
+# TUI settings
+tui_theme = "dark"
+tui_refresh_rate = 0.5
+
+# Logging settings
+log_level = "INFO"
+log_file = ""

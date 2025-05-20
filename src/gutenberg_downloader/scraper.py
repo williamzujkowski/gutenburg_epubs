@@ -277,33 +277,76 @@ class GutenbergScraper:
         soup = BeautifulSoup(html_content, "lxml")
         books = []
 
-        # Find book list items
-        book_list = soup.find("ol", {"class": "pgdbbylanguage"})
-        if not book_list:
-            # Alternative structure
-            book_list = soup.find("ul")
+        # Find the "Top 100 EBooks yesterday" section
+        heading = soup.find("h2", id="books-last1")
+        if heading:
+            # The ordered list follows the heading
+            book_list = heading.find_next_sibling("ol")
+            
+            if book_list:
+                for item in book_list.find_all("li")[:limit]:
+                    book_info: dict[str, Any] = {}
 
-        if book_list:
-            for item in book_list.find_all("li")[:limit]:
-                book_info: dict[str, Any] = {}
+                    # Find link to book page
+                    link = item.find("a")
+                    if link:
+                        href = link.get("href")
+                        book_info["url"] = urljoin(self.base_url, href)
+                        
+                        # Extract title and download count from link text
+                        text = link.get_text(strip=True)
+                        # Text format: "Title by Author (count)"
+                        if " by " in text and "(" in text:
+                            title_author = text.split("(")[0].strip()
+                            download_count = text.split("(")[1].rstrip(")").strip()
+                            
+                            parts = title_author.split(" by ")
+                            book_info["title"] = parts[0].strip()
+                            if len(parts) > 1:
+                                book_info["author"] = parts[1].strip()
+                            
+                            try:
+                                book_info["download_count"] = int(download_count)
+                            except ValueError:
+                                pass
+                        else:
+                            book_info["title"] = text
 
-                # Find link to book page
-                link = item.find("a")
-                if link:
-                    href = link.get("href")
-                    book_info["url"] = urljoin(self.base_url, href)
-                    book_info["title"] = link.get_text(strip=True)
+                        # Extract book ID from URL
+                        if "/ebooks/" in href:
+                            try:
+                                book_id = int(href.split("/ebooks/")[-1].rstrip("/"))
+                                book_info["book_id"] = book_id
+                            except (ValueError, IndexError):
+                                pass
 
-                    # Extract book ID from URL
-                    if "/ebooks/" in href:
+                        if "book_id" in book_info:  # Only add if we found a book ID
+                            books.append(book_info)
+
+        # If the first method didn't work, try alternative structure
+        if not books:
+            # Look for any ordered list on the page
+            for ol in soup.find_all("ol"):
+                for item in ol.find_all("li")[:limit]:
+                    link = item.find("a")
+                    if link and "/ebooks/" in link.get("href", ""):
+                        book_info = {}
+                        href = link.get("href")
+                        book_info["url"] = urljoin(self.base_url, href)
+                        
+                        text = link.get_text(strip=True)
+                        book_info["title"] = text.split(" by ")[0].strip() if " by " in text else text
+                        
+                        # Extract book ID
                         try:
                             book_id = int(href.split("/ebooks/")[-1].rstrip("/"))
                             book_info["book_id"] = book_id
+                            books.append(book_info)
                         except (ValueError, IndexError):
                             pass
-
-                    books.append(book_info)
+                
+                if books:  # If we found books, stop looking
+                    break
 
         logger.info(f"Found {len(books)} popular books", extra={"limit": limit})
-
         return books

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A tool to download EPUB files from Project Gutenberg"
 readme = "README.md"
 authors = [
-    { name = "William Zujkowski", email = "williamzujkowski@gmail.com" }
+    { name = "William Zujkowski", email = "william.zujkowski@gmail.com" }
 ]
 requires-python = ">=3.9"
 dependencies = [
@@ -16,6 +16,12 @@ dependencies = [
     "tenacity>=8.2",
     "aiofiles>=23.1",
     "uvloop>=0.17;platform_system!='Windows'",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "textual>=0.40",
+    "rich>=13.0",
+    "toml>=0.10",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

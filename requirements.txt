@@ -1,0 +1,14 @@
+httpx>=0.24
+beautifulsoup4>=4.12
+lxml>=4.9
+tqdm>=4.65
+robotexclusionrulesparser>=1.6
+tenacity>=8.2
+aiofiles>=23.1
+uvloop>=0.17;platform_system!='Windows'
+pandas>=2.0
+openpyxl>=3.1
+textual>=0.40
+rich>=13.0
+toml>=0.10
+pyyaml>=6.0

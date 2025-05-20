@@ -7,7 +7,7 @@ BASE_URL = "https://www.gutenberg.org"
 
 # User agent string - IMPORTANT: Update with your project URL
 DEFAULT_USER_AGENT = (
-    "GutenbergEPUBCrawler/0.1.0 (+http://your-project-url-or-email.com)"
+    "GutenbergEPUBCrawler/0.1.0 (+william.zujkowski@gmail.com)"
 )
 
 # Rate limiting
